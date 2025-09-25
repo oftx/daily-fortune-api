@@ -1,0 +1,90 @@
+# --- Byte-compiled / optimized / C files ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+
+# --- C extensions ---
+*.so
+
+
+# --- Distribution / packaging ---
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+
+# --- Virtual Environments ---
+# The most important rule: never commit your virtual environment folder.
+venv/
+env/
+.venv/
+virtualenv/
+
+
+# --- Environment Variables ---
+# Never commit your .env file which contains secrets.
+# The .env.example file SHOULD be committed as a template.
+.env
+
+
+# --- IDE / Editor specific files ---
+# Visual Studio Code
+.vscode/*
+!.vscode/settings.json
+!.vscode/launch.json
+# PyCharm
+.idea/
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+# Vim
+*.swp
+*.swo
+
+
+# --- Testing ---
+.pytest_cache/
+.tox/
+.coverage
+.coverage.*
+nosetests.xml
+coverage.xml
+htmlcov/
+.hypothesis/
+
+
+# --- Database ---
+# For file-based dbs like SQLite, though not used in this project.
+*.sqlite3
+*.db
+
+
+# --- Operating System Files ---
+# macOS
+.DS_Store
+# Windows
+Thumbs.db
+desktop.ini
+
+
+# --- Log files ---
+*.log
+logs/
