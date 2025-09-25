@@ -1,12 +1,24 @@
 # app/models/user.py
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List
 from datetime import datetime
+import re # <-- Import the regular expression module
 
 class UserBase(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     email: EmailStr
+
+    # --- THIS IS THE NEW VALIDATOR ---
+    @field_validator('username')
+    @classmethod
+    def username_alphanumeric(cls, value: str) -> str:
+        """
+        Validates that the username contains only letters, numbers, and underscores.
+        """
+        if not re.match(r'^[a-zA-Z0-9_]+$', value):
+            raise ValueError('Username can only contain letters, numbers, and underscores.')
+        return value
 
 class UserCreate(UserBase):
     password: str = Field(..., min_length=6)
