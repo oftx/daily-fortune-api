@@ -12,13 +12,13 @@ from ..models.user import UserInDB
 from ..models.fortune import LeaderboardEntry
 from .dependencies import get_optional_current_user
 from ..core.rate_limiter import limiter_decorator
+from ..core.time_service import get_current_day_start_in_utc
 
 router = APIRouter(prefix="/fortune", tags=["Fortune"])
 
 @router.post("/draw")
 @limiter_decorator("30/minute")
 async def draw(request: Request, db: AsyncIOMotorDatabase = Depends(get_db), current_user: UserInDB | None = Depends(get_optional_current_user)):
-    today = datetime.now(timezone.utc).date()
     
     if current_user:
         if current_user.status != "active":
@@ -28,10 +28,10 @@ async def draw(request: Request, db: AsyncIOMotorDatabase = Depends(get_db), cur
         
         await db.users.update_one({"_id": user_id_obj}, {"$set": {"last_active_date": datetime.now(timezone.utc)}})
         
-        today_start = datetime.combine(today, time.min)
+        today_start_utc = get_current_day_start_in_utc()
         existing_fortune = await db.fortunes.find_one({
             "user_id": user_id_obj,
-            "date": today_start
+            "date": today_start_utc
         })
         
         if existing_fortune:
@@ -40,7 +40,7 @@ async def draw(request: Request, db: AsyncIOMotorDatabase = Depends(get_db), cur
         new_fortune_value = draw_fortune_logic()
         fortune_doc = {
             "user_id": user_id_obj,
-            "date": today_start,
+            "date": today_start_utc,
             "value": new_fortune_value,
             "created_at": datetime.now(timezone.utc)
         }
@@ -54,14 +54,13 @@ async def draw(request: Request, db: AsyncIOMotorDatabase = Depends(get_db), cur
 async def get_todays_leaderboard(request: Request, db: AsyncIOMotorDatabase = Depends(get_db)):
     """
     Gets the leaderboard for fortunes drawn today.
-    This uses a MongoDB aggregation pipeline to join fortunes with users.
     """
-    today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min)
+    today_start_utc = get_current_day_start_in_utc()
 
     pipeline = [
         {
             "$match": {
-                "date": {"$gte": today_start}
+                "date": {"$eq": today_start_utc}
             }
         },
         {

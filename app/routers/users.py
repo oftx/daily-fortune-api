@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from datetime import datetime, timedelta, time, timezone
 from pymongo.errors import DuplicateKeyError
+import pytz
 
 from ..db import get_db
 from ..models.user import UserInDB, UserMeProfile, UserPublicProfile, UserUpdate
@@ -11,6 +12,8 @@ from ..models.fortune import FortuneHistoryItem
 from .dependencies import get_current_user, get_current_active_user, get_optional_current_user
 from bson import ObjectId
 from ..core.rate_limiter import limiter_decorator
+from ..core.time_service import get_current_day_start_in_utc
+from ..core.config import settings
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -24,16 +27,17 @@ async def read_users_me(
     user_id_obj = ObjectId(current_user.id)
     total_draws = await db.fortunes.count_documents({"user_id": user_id_obj})
     
-    today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min)
+    today_start_utc = get_current_day_start_in_utc()
     todays_fortune_doc = await db.fortunes.find_one({
         "user_id": user_id_obj,
-        "date": today_start
+        "date": today_start_utc
     })
     
     has_drawn_today = todays_fortune_doc is not None
     todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
     
-    user_data = current_user.dict()
+    # current_user is already a validated UserInDB model, so we can trust its fields.
+    user_data = current_user.model_dump()
     user_data["total_draws"] = total_draws
     user_data["has_drawn_today"] = has_drawn_today
     user_data["todays_fortune"] = todays_fortune_value
@@ -49,7 +53,7 @@ async def update_user_me(
     db: AsyncIOMotorDatabase = Depends(get_db)
 ):
     user_id_obj = ObjectId(current_user.id)
-    update_data = user_update.dict(exclude_unset=True)
+    update_data = user_update.model_dump(exclude_unset=True)
     
     if not update_data:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No update data provided")
@@ -65,28 +69,43 @@ async def update_user_me(
             detail="Display name is already taken. Please choose another one."
         )
     
+    # After updating, fetch the complete and fresh user document from the DB
     updated_user_doc = await db.users.find_one({"_id": user_id_obj})
+    
+    # Re-use the logic from get_public_profile to build the response model correctly
     total_draws = await db.fortunes.count_documents({"user_id": user_id_obj})
     
-    today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min)
+    today_start_utc = get_current_day_start_in_utc()
     todays_fortune_doc = await db.fortunes.find_one({
         "user_id": user_id_obj,
-        "date": today_start
+        "date": today_start_utc
     })
 
     has_drawn_today = todays_fortune_doc is not None
     todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
 
-    updated_user_doc['_id'] = str(updated_user_doc['_id'])
-    user_data = {
-        **updated_user_doc, 
-        "id": str(updated_user_doc["_id"]), 
-        "total_draws": total_draws, 
+    # Construct the dictionary for the model MANUALLY and SAFELY
+    user_profile_data = {
+        "id": str(updated_user_doc["_id"]),
+        "username": updated_user_doc["username"],
+        "display_name": updated_user_doc["display_name"],
+        "email": updated_user_doc["email"],
+        "role": updated_user_doc["role"],
+        "status": updated_user_doc["status"],
+        "is_hidden": updated_user_doc.get("is_hidden", False),
+        "tags": updated_user_doc.get("tags", []),
+        "bio": updated_user_doc["bio"],
+        "avatar_url": updated_user_doc["avatar_url"],
+        "background_url": updated_user_doc["background_url"],
+        "language": updated_user_doc["language"],
+        "registration_date": updated_user_doc["registration_date"],
+        "last_active_date": updated_user_doc["last_active_date"],
+        "total_draws": total_draws,
         "has_drawn_today": has_drawn_today,
-        "todays_fortune": todays_fortune_value
+        "todays_fortune": todays_fortune_value,
     }
 
-    return UserMeProfile(**user_data)
+    return UserMeProfile(**user_profile_data)
 
 
 @router.get("/u/{username}/fortune-history", response_model=list[FortuneHistoryItem])
@@ -96,16 +115,23 @@ async def get_user_fortune_history(request: Request, username: str, db: AsyncIOM
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
+    try:
+        app_tz = pytz.timezone(settings.APP_TIMEZONE)
+    except pytz.UnknownTimeZoneError:
+        app_tz = pytz.utc
+        
     one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
     
     history_cursor = db.fortunes.find({
         "user_id": user["_id"],
-        "date": {"$gte": one_year_ago}
+        "created_at": {"$gte": one_year_ago}
     })
     
     history = []
     async for record in history_cursor:
-        history.append(FortuneHistoryItem(date=record["date"].date(), value=record["value"]))
+        business_day_utc = record["date"]
+        local_date = business_day_utc.astimezone(app_tz).date()
+        history.append(FortuneHistoryItem(date=local_date, value=record["value"]))
         
     return history
 
@@ -131,22 +157,30 @@ async def get_public_profile(
     user_id_obj = user_doc["_id"]
     total_draws = await db.fortunes.count_documents({"user_id": user_id_obj})
     
-    today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min)
+    today_start_utc = get_current_day_start_in_utc()
     todays_fortune_doc = await db.fortunes.find_one({
         "user_id": user_id_obj,
-        "date": today_start
+        "date": today_start_utc
     })
 
     has_drawn_today = todays_fortune_doc is not None
     todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
 
-    user_data = {
-        **user_doc, 
+    # Construct the dictionary for the model MANUALLY and SAFELY
+    user_profile_data = {
+        "username": user_doc["username"],
+        "display_name": user_doc["display_name"],
+        "status": user_doc["status"],
+        "is_hidden": is_hidden,
+        "tags": user_doc.get("tags", []),
+        "bio": user_doc["bio"],
+        "avatar_url": user_doc["avatar_url"],
+        "background_url": user_doc["background_url"],
+        "registration_date": user_doc["registration_date"],
+        "last_active_date": user_doc["last_active_date"],
         "total_draws": total_draws,
         "has_drawn_today": has_drawn_today,
         "todays_fortune": todays_fortune_value,
-        "is_hidden": is_hidden,
-        "tags": user_doc.get("tags", [])
     }
     
-    return UserPublicProfile(**user_data)
+    return UserPublicProfile(**user_profile_data)

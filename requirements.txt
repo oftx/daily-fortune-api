@@ -10,3 +10,4 @@ email-validator
 python-multipart
 slowapi
 redis
+pytz

@@ -12,6 +12,7 @@ from ..db import get_db
 from ..models.user import UserCreate, UserMeProfile
 from ..models.token import Token
 from ..core.rate_limiter import limiter_decorator
+from ..core.time_service import get_current_day_start_in_utc
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -92,20 +93,17 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
     access_token = create_access_token(data={"sub": str(user_id_obj)})
     total_draws = await db.fortunes.count_documents({"user_id": user_id_obj})
     
-    today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min)
+    today_start_utc = get_current_day_start_in_utc()
     todays_fortune_doc = await db.fortunes.find_one({
         "user_id": user_id_obj,
-        "date": today_start
+        "date": today_start_utc
     })
     
     has_drawn_today = todays_fortune_doc is not None
     todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
     
-    # --- THIS IS THE FIX ---
-    # Use .pop() to get the value AND remove it from the dict for BOTH fields
     is_hidden_status = user_doc.pop("is_hidden", False)
     tags_list = user_doc.pop("tags", [])
-    # --- END OF FIX ---
     
     user_doc['_id'] = str(user_doc['_id'])
 
