@@ -13,6 +13,7 @@ class UserCreate(UserBase):
 
 class UserInDB(UserBase):
     id: str = Field(alias="_id")
+    display_name: str
     password_hash: str
     role: str = "user"
     status: str = "active"
@@ -25,11 +26,12 @@ class UserInDB(UserBase):
 
 class UserPublicProfile(BaseModel):
     username: str
+    display_name: str
     bio: str
     avatar_url: str
     background_url: str
     registration_date: datetime
-    total_draws: int # <-- ADDED
+    total_draws: int
 
 class UserMeProfile(UserPublicProfile):
     id: str
@@ -37,11 +39,11 @@ class UserMeProfile(UserPublicProfile):
     role: str
     language: str
     last_active_date: datetime
-    # total_draws is inherited
+    has_drawn_today: bool # <-- NEW: Add this field
 
 class UserUpdate(BaseModel):
-    # Model for updating user settings. All fields are optional.
+    display_name: Optional[str] = Field(None, min_length=3, max_length=50)
     bio: Optional[str] = Field(None, max_length=300)
     avatar_url: Optional[str] = Field(None)
     background_url: Optional[str] = Field(None)
-    language: Optional[str] = Field(None, pattern="^(zh|en)$") # Example validation
+    language: Optional[str] = Field(None, pattern="^(zh|en)$")
