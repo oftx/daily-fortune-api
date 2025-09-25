@@ -1,8 +1,10 @@
+# app/routers/auth.py
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
-from datetime import datetime, timezone, time # <-- IMPORT time
+from datetime import datetime, timezone, time
 from bson import ObjectId
 
 from ..core.security import create_access_token, get_password_hash, verify_password
@@ -48,8 +50,8 @@ async def register_user(user: UserCreate, db: AsyncIOMotorDatabase = Depends(get
     created_user_doc = await db.users.find_one({"_id": new_user_id})
     access_token = create_access_token(data={"sub": str(new_user_id)})
     
-    # For a new user, has_drawn_today is always False
-    user_profile = UserMeProfile(**created_user_doc, id=str(created_user_doc["_id"]), total_draws=0, has_drawn_today=False)
+    # For a new user, has_drawn_today is always False, and there is no fortune result
+    user_profile = UserMeProfile(**created_user_doc, id=str(created_user_doc["_id"]), total_draws=0, has_drawn_today=False, todays_fortune=None)
 
     return {
         "access_token": access_token, 
@@ -73,22 +75,25 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     access_token = create_access_token(data={"sub": str(user_id_obj)})
     total_draws = await db.fortunes.count_documents({"user_id": user_id_obj})
     
-    # --- THIS IS THE FIX ---
-    # We must calculate has_drawn_today and provide it to the model
+    # --- MODIFICATION START ---
+    # Fetch today's fortune document to get both the status and the value
     today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min)
-    todays_fortune = await db.fortunes.find_one({
+    todays_fortune_doc = await db.fortunes.find_one({
         "user_id": user_id_obj,
         "date": today_start
     })
-    has_drawn_today = todays_fortune is not None
+    
+    has_drawn_today = todays_fortune_doc is not None
+    todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
     
     user_profile = UserMeProfile(
         **user_doc, 
         id=str(user_id_obj), 
         total_draws=total_draws, 
-        has_drawn_today=has_drawn_today
+        has_drawn_today=has_drawn_today,
+        todays_fortune=todays_fortune_value
     )
-    # --- END OF FIX ---
+    # --- MODIFICATION END ---
 
     return {
         "access_token": access_token, 

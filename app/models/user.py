@@ -31,15 +31,18 @@ class UserPublicProfile(BaseModel):
     avatar_url: str
     background_url: str
     registration_date: datetime
-    last_active_date: datetime  # <-- MOVED HERE
+    last_active_date: datetime
     total_draws: int
+    # --- MODIFICATION: Moved from UserMeProfile to here for universal access ---
+    has_drawn_today: bool
+    todays_fortune: Optional[str] = None
 
 class UserMeProfile(UserPublicProfile):
     id: str
     email: EmailStr
     role: str
     language: str
-    has_drawn_today: bool
+    # has_drawn_today and todays_fortune are now inherited from UserPublicProfile
 
 class UserUpdate(BaseModel):
     display_name: Optional[str] = Field(None, min_length=3, max_length=50)
