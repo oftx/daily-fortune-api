@@ -1,8 +1,6 @@
-# app/routers/users.py
-
 from fastapi import APIRouter, Depends, HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from datetime import datetime, timedelta, time # <-- NEW: Import time
+from datetime import datetime, timedelta, time, timezone
 from pymongo.errors import DuplicateKeyError
 
 from ..db import get_db
@@ -21,22 +19,19 @@ async def read_users_me(
     user_id_obj = ObjectId(current_user.id)
     total_draws = await db.fortunes.count_documents({"user_id": user_id_obj})
     
-    # vvv NEW LOGIC: Check if a fortune exists for today vvv
-    today_start = datetime.combine(datetime.utcnow().date(), time.min)
+    today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min)
     todays_fortune = await db.fortunes.find_one({
         "user_id": user_id_obj,
         "date": today_start
     })
     has_drawn_today = todays_fortune is not None
-    # ^^^ END OF NEW LOGIC ^^^
     
     user_data = current_user.dict()
     user_data["total_draws"] = total_draws
-    user_data["has_drawn_today"] = has_drawn_today # <-- NEW: Add to data
+    user_data["has_drawn_today"] = has_drawn_today
     
     return UserMeProfile(**user_data)
 
-# ... (the rest of the file remains the same)
 @router.patch("/me", response_model=UserMeProfile)
 async def update_user_me(
     user_update: UserUpdate,
@@ -45,34 +40,65 @@ async def update_user_me(
 ):
     user_id_obj = ObjectId(current_user.id)
     update_data = user_update.dict(exclude_unset=True)
+    
     if not update_data:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No update data provided")
+
     try:
-        await db.users.update_one({"_id": user_id_obj}, {"$set": update_data})
+        await db.users.update_one(
+            {"_id": user_id_obj},
+            {"$set": update_data}
+        )
     except DuplicateKeyError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Display name is already taken. Please choose another one.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Display name is already taken. Please choose another one."
+        )
+    
     updated_user_doc = await db.users.find_one({"_id": user_id_obj})
     total_draws = await db.fortunes.count_documents({"user_id": user_id_obj})
-    # Note: We don't recalculate has_drawn_today on PATCH, it will be correct on the next GET
-    return UserMeProfile(**updated_user_doc, id=str(updated_user_doc["_id"]), total_draws=total_draws, has_drawn_today=True) # Assuming this isn't critical to be perfect on the PATCH response
+    
+    # Recalculate has_drawn_today to return the most up-to-date info
+    today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min)
+    todays_fortune = await db.fortunes.find_one({
+        "user_id": user_id_obj,
+        "date": today_start
+    })
+    has_drawn_today = todays_fortune is not None
+
+    user_data = {**updated_user_doc, "id": str(updated_user_doc["_id"]), "total_draws": total_draws, "has_drawn_today": has_drawn_today}
+
+    return UserMeProfile(**user_data)
+
 
 @router.get("/u/{username}/fortune-history", response_model=list[FortuneHistoryItem])
 async def get_user_fortune_history(username: str, db: AsyncIOMotorDatabase = Depends(get_db)):
     user = await db.users.find_one({"username": username.lower()})
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    one_year_ago = datetime.utcnow() - timedelta(days=365)
-    history_cursor = db.fortunes.find({"user_id": user["_id"], "date": {"$gte": one_year_ago}})
+        
+    one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
+    
+    history_cursor = db.fortunes.find({
+        "user_id": user["_id"],
+        "date": {"$gte": one_year_ago}
+    })
+    
     history = []
     async for record in history_cursor:
         history.append(FortuneHistoryItem(date=record["date"].date(), value=record["value"]))
+        
     return history
+
 
 @router.get("/u/{username}", response_model=UserPublicProfile)
 async def get_public_profile(username: str, db: AsyncIOMotorDatabase = Depends(get_db)):
     user_doc = await db.users.find_one({"username": username.lower()})
     if not user_doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
     total_draws = await db.fortunes.count_documents({"user_id": user_doc["_id"]})
+    
     user_data = {**user_doc, "total_draws": total_draws}
+    
     return UserPublicProfile(**user_data)

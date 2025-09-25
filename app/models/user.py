@@ -31,6 +31,7 @@ class UserPublicProfile(BaseModel):
     avatar_url: str
     background_url: str
     registration_date: datetime
+    last_active_date: datetime  # <-- MOVED HERE
     total_draws: int
 
 class UserMeProfile(UserPublicProfile):
@@ -38,8 +39,7 @@ class UserMeProfile(UserPublicProfile):
     email: EmailStr
     role: str
     language: str
-    last_active_date: datetime
-    has_drawn_today: bool # <-- NEW: Add this field
+    has_drawn_today: bool
 
 class UserUpdate(BaseModel):
     display_name: Optional[str] = Field(None, min_length=3, max_length=50)

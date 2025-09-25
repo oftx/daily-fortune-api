@@ -8,5 +8,6 @@ class FortuneHistoryItem(BaseModel):
     value: str
 
 class LeaderboardEntry(BaseModel):
-    username: str
+    username: str      # The unique UserID for the link
+    display_name: str  # The name to show to the user
     value: str
