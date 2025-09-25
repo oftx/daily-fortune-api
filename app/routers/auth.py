@@ -55,7 +55,19 @@ async def register_user(request: Request, user: UserCreate, db: AsyncIOMotorData
     access_token = create_access_token(data={"sub": str(new_user_id)})
     
     created_user_doc['_id'] = str(created_user_doc['_id'])
-    user_profile = UserMeProfile(**created_user_doc, id=str(created_user_doc["_id"]), total_draws=0, has_drawn_today=False, todays_fortune=None)
+    
+    is_hidden_status = created_user_doc.pop("is_hidden", False)
+    tags_list = created_user_doc.pop("tags", [])
+
+    user_profile = UserMeProfile(
+        **created_user_doc,
+        id=str(new_user_id),
+        total_draws=0,
+        has_drawn_today=False,
+        todays_fortune=None,
+        is_hidden=is_hidden_status,
+        tags=tags_list
+    )
 
     return {
         "access_token": access_token, 
@@ -89,7 +101,11 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
     has_drawn_today = todays_fortune_doc is not None
     todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
     
+    # --- THIS IS THE FIX ---
+    # Use .pop() to get the value AND remove it from the dict for BOTH fields
     is_hidden_status = user_doc.pop("is_hidden", False)
+    tags_list = user_doc.pop("tags", [])
+    # --- END OF FIX ---
     
     user_doc['_id'] = str(user_doc['_id'])
 
@@ -100,7 +116,7 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
         has_drawn_today=has_drawn_today,
         todays_fortune=todays_fortune_value,
         is_hidden=is_hidden_status,
-        tags=user_doc.get("tags", [])
+        tags=tags_list
     )
 
     return {
