@@ -1,6 +1,7 @@
 # app/core/config.py
 
 from pydantic_settings import BaseSettings
+from typing import List, Union
 
 class Settings(BaseSettings):
     DATABASE_URL: str
@@ -13,16 +14,21 @@ class Settings(BaseSettings):
     ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
     
-    # --- NEW: Timezone and Day Reset Configuration ---
-    # The IANA timezone name for the application's business logic.
-    # Example: "Asia/Shanghai", "America/New_York", "UTC"
     APP_TIMEZONE: str = "UTC" 
-    
-    # An offset in seconds to adjust the start of a new day.
-    # 0 means the day resets at 00:00 in APP_TIMEZONE.
-    # 3600 means the day resets at 01:00 in APP_TIMEZONE.
-    # -3600 means the day resets at 23:00 of the previous day in APP_TIMEZONE.
     DAY_RESET_OFFSET_SECONDS: int = 0
+    
+    # --- NEW: Centralized Domain and CORS Configuration ---
+    # The domain for the API server itself. Example: api.yourdomain.com
+    API_DOMAIN: str = "localhost"
+    
+    # A comma-separated string of allowed frontend origins for CORS.
+    # Example: "https://app.yourdomain.com,https://admin.yourdomain.com"
+    CORS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
+
+    # Helper property to convert the comma-separated string to a list
+    @property
+    def cors_origins_list(self) -> List[str]:
+        return [origin.strip() for origin in self.CORS_ORIGINS.split(",")]
 
     class Config:
         env_file = ".env"
