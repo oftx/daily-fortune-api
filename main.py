@@ -11,18 +11,17 @@ from logging.handlers import RotatingFileHandler
 import time
 from jose import jwt, JWTError
 
-# --- MODIFIED: Import both limiter and limiter_decorator ---
-from app.core.rate_limiter import limiter, limiter_decorator
+# --- Core Application Imports ---
+from app.db import db
+from app.routers import auth, config, fortune, users, admin
 from app.core.config import settings
 
-# --- Import the exception only if the limiter is active ---
+# --- Rate Limiting Imports (Conditional) ---
+from app.core.rate_limiter import limiter, limiter_decorator
 if limiter:
     from slowapi.errors import RateLimitExceeded
 
-from app.db import db
-from app.routers import auth, config, fortune, users, admin
-
-
+# --- Logging Setup ---
 logger = logging.getLogger("api_logger")
 logger.setLevel(logging.INFO)
 handler = RotatingFileHandler("api.log", maxBytes=5*1024*1024, backupCount=5)
@@ -33,6 +32,9 @@ logger.addHandler(handler)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """
+    Application startup and shutdown logic.
+    """
     logger.info("Application startup: creating database indexes...")
     try:
         await db.users.create_indexes([
@@ -61,7 +63,7 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-
+# --- Rate Limiting Setup (Conditional) ---
 if settings.RATE_LIMITING_ENABLED and limiter:
     logger.info(f"Rate limiting is ENABLED. Storage: {settings.REDIS_URL}")
     app.state.limiter = limiter
@@ -76,7 +78,7 @@ if settings.RATE_LIMITING_ENABLED and limiter:
 else:
     logger.info("Rate limiting is DISABLED.")
 
-
+# --- Logging Middleware ---
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start_time = time.time()
@@ -106,26 +108,29 @@ async def log_requests(request: Request, call_next):
     logger.info(log_message)
     return response
 
-
-origins = [
-    "http://localhost:5173",
-    "http://127.0.0.1:5173",
-]
+# --- Dynamic CORS Middleware Configuration ---
+# The origins list is now dynamically read from the settings via the .env file.
+logger.info(f"CORS origins configured for: {settings.CORS_ORIGINS}")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# --- API Routers ---
 app.include_router(auth.router)
 app.include_router(config.router)
 app.include_router(fortune.router)
 app.include_router(users.router)
 app.include_router(admin.router)
 
+# --- Root Endpoint ---
 @app.get("/")
-@limiter_decorator("100/minute") # Example of applying a general limit
+@limiter_decorator("100/minute")
 def read_root(request: Request):
+    """
+    Root endpoint for health checks and welcome message.
+    """
     return {"message": "Welcome to the DailyFortune API!"}
