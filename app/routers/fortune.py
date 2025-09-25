@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
+# app/routers/fortune.py
+
+from fastapi import APIRouter, Depends, HTTPException, Request
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from datetime import datetime, date, time, timezone
 from bson import ObjectId
@@ -9,11 +11,13 @@ from ..services.fortune_service import draw_fortune_logic
 from ..models.user import UserInDB
 from ..models.fortune import LeaderboardEntry
 from .dependencies import get_optional_current_user
+from ..core.rate_limiter import limiter_decorator
 
 router = APIRouter(prefix="/fortune", tags=["Fortune"])
 
 @router.post("/draw")
-async def draw(current_user: UserInDB | None = Depends(get_optional_current_user), db: AsyncIOMotorDatabase = Depends(get_db)):
+@limiter_decorator("30/minute") # Protect against spamming the draw logic
+async def draw(request: Request, current_user: UserInDB | None = Depends(get_optional_current_user), db: AsyncIOMotorDatabase = Depends(get_db)):
     today = datetime.now(timezone.utc).date()
     
     if current_user:
@@ -40,10 +44,12 @@ async def draw(current_user: UserInDB | None = Depends(get_optional_current_user
         await db.fortunes.insert_one(fortune_doc)
         return {"fortune": new_fortune_value}
     else:
+        # Unauthenticated users also share the rate limit
         return {"fortune": draw_fortune_logic()}
 
 @router.get("/leaderboard", response_model=List[LeaderboardEntry])
-async def get_todays_leaderboard(db: AsyncIOMotorDatabase = Depends(get_db)):
+@limiter_decorator("60/minute") # This involves a DB aggregation, so it needs protection
+async def get_todays_leaderboard(request: Request, db: AsyncIOMotorDatabase = Depends(get_db)):
     """
     Gets the leaderboard for fortunes drawn today.
     This uses a MongoDB aggregation pipeline to join fortunes with users.

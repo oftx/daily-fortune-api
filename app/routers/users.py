@@ -1,6 +1,6 @@
 # app/routers/users.py
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from datetime import datetime, timedelta, time, timezone
 from pymongo.errors import DuplicateKeyError
@@ -10,11 +10,14 @@ from ..models.user import UserInDB, UserMeProfile, UserPublicProfile, UserUpdate
 from ..models.fortune import FortuneHistoryItem
 from .dependencies import get_current_user
 from bson import ObjectId
+from ..core.rate_limiter import limiter_decorator
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
 @router.get("/me", response_model=UserMeProfile)
+@limiter_decorator("100/minute") # Lenient limit for authenticated user's own data
 async def read_users_me(
+    request: Request,
     current_user: UserInDB = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db)
 ):
@@ -38,7 +41,9 @@ async def read_users_me(
     return UserMeProfile(**user_data)
 
 @router.patch("/me", response_model=UserMeProfile)
+@limiter_decorator("20/minute")
 async def update_user_me(
+    request: Request,
     user_update: UserUpdate,
     current_user: UserInDB = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db)
@@ -84,7 +89,8 @@ async def update_user_me(
 
 
 @router.get("/u/{username}/fortune-history", response_model=list[FortuneHistoryItem])
-async def get_user_fortune_history(username: str, db: AsyncIOMotorDatabase = Depends(get_db)):
+@limiter_decorator("60/minute") # Protect this public endpoint from enumeration
+async def get_user_fortune_history(request: Request, username: str, db: AsyncIOMotorDatabase = Depends(get_db)):
     user = await db.users.find_one({"username": username.lower()})
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -104,7 +110,8 @@ async def get_user_fortune_history(username: str, db: AsyncIOMotorDatabase = Dep
 
 
 @router.get("/u/{username}", response_model=UserPublicProfile)
-async def get_public_profile(username: str, db: AsyncIOMotorDatabase = Depends(get_db)):
+@limiter_decorator("60/minute") # Protect this public endpoint from enumeration
+async def get_public_profile(request: Request, username: str, db: AsyncIOMotorDatabase = Depends(get_db)):
     user_doc = await db.users.find_one({"username": username.lower()})
     if not user_doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -112,7 +119,6 @@ async def get_public_profile(username: str, db: AsyncIOMotorDatabase = Depends(g
     user_id_obj = user_doc["_id"]
     total_draws = await db.fortunes.count_documents({"user_id": user_id_obj})
     
-    # --- MODIFICATION START: Fetch fortune status for the public profile ---
     today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min)
     todays_fortune_doc = await db.fortunes.find_one({
         "user_id": user_id_obj,
@@ -128,6 +134,5 @@ async def get_public_profile(username: str, db: AsyncIOMotorDatabase = Depends(g
         "has_drawn_today": has_drawn_today,
         "todays_fortune": todays_fortune_value
     }
-    # --- MODIFICATION END ---
     
     return UserPublicProfile(**user_data)

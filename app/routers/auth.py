@@ -1,6 +1,6 @@
 # app/routers/auth.py
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
@@ -12,10 +12,15 @@ from ..db import get_db
 from ..models.user import UserCreate, UserMeProfile
 from ..models.token import Token
 
+# --- NEW: Import the conditional decorator ---
+from ..core.rate_limiter import limiter_decorator
+
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
-async def register_user(user: UserCreate, db: AsyncIOMotorDatabase = Depends(get_db)):
+# --- MODIFIED: Use the new decorator ---
+@limiter_decorator("5/minute")
+async def register_user(request: Request, user: UserCreate, db: AsyncIOMotorDatabase = Depends(get_db)):
     config = await db.config.find_one({"key": "registration_status"})
     if not config or not config.get("value", False):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration is currently closed.")
@@ -50,7 +55,6 @@ async def register_user(user: UserCreate, db: AsyncIOMotorDatabase = Depends(get
     created_user_doc = await db.users.find_one({"_id": new_user_id})
     access_token = create_access_token(data={"sub": str(new_user_id)})
     
-    # For a new user, has_drawn_today is always False, and there is no fortune result
     user_profile = UserMeProfile(**created_user_doc, id=str(created_user_doc["_id"]), total_draws=0, has_drawn_today=False, todays_fortune=None)
 
     return {
@@ -60,7 +64,9 @@ async def register_user(user: UserCreate, db: AsyncIOMotorDatabase = Depends(get
     }
 
 @router.post("/login")
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncIOMotorDatabase = Depends(get_db)):
+# --- MODIFIED: Use the new decorator ---
+@limiter_decorator("10/minute")
+async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncIOMotorDatabase = Depends(get_db)):
     user_doc = await db.users.find_one({"username": form_data.username.lower()})
     if not user_doc or not verify_password(form_data.password, user_doc["password_hash"]):
         raise HTTPException(
@@ -75,8 +81,6 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     access_token = create_access_token(data={"sub": str(user_id_obj)})
     total_draws = await db.fortunes.count_documents({"user_id": user_id_obj})
     
-    # --- MODIFICATION START ---
-    # Fetch today's fortune document to get both the status and the value
     today_start = datetime.combine(datetime.now(timezone.utc).date(), time.min)
     todays_fortune_doc = await db.fortunes.find_one({
         "user_id": user_id_obj,
@@ -93,7 +97,6 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
         has_drawn_today=has_drawn_today,
         todays_fortune=todays_fortune_value
     )
-    # --- MODIFICATION END ---
 
     return {
         "access_token": access_token, 

@@ -2,6 +2,7 @@
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pymongo import IndexModel, ASCENDING
 from pymongo.errors import OperationFailure
 from contextlib import asynccontextmanager
@@ -10,32 +11,28 @@ from logging.handlers import RotatingFileHandler
 import time
 from jose import jwt, JWTError
 
-from app.db import db
-from app.routers import auth, config, fortune, users, admin
+# --- MODIFIED: Import both limiter and limiter_decorator ---
+from app.core.rate_limiter import limiter, limiter_decorator
 from app.core.config import settings
 
-# --- NEW: LOGGING SETUP ---
-# Create a logger instance
+# --- Import the exception only if the limiter is active ---
+if limiter:
+    from slowapi.errors import RateLimitExceeded
+
+from app.db import db
+from app.routers import auth, config, fortune, users, admin
+
+
 logger = logging.getLogger("api_logger")
 logger.setLevel(logging.INFO)
-
-# Create a file handler that rotates logs, keeping 5 backups of 5MB each
-# This prevents the log file from growing indefinitely
 handler = RotatingFileHandler("api.log", maxBytes=5*1024*1024, backupCount=5)
-
-# Create a formatter and add it to the handler
-# The format includes timestamp, log level, and the message
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 handler.setFormatter(formatter)
-
-# Add the handler to the logger
 logger.addHandler(handler)
-# --- END OF LOGGING SETUP ---
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # This now uses the logger we configured above
     logger.info("Application startup: creating database indexes...")
     try:
         await db.users.create_indexes([
@@ -64,12 +61,26 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# --- NEW: LOGGING MIDDLEWARE ---
+
+if settings.RATE_LIMITING_ENABLED and limiter:
+    logger.info(f"Rate limiting is ENABLED. Storage: {settings.REDIS_URL}")
+    app.state.limiter = limiter
+
+    @app.exception_handler(RateLimitExceeded)
+    async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+        logger.warning(f"Rate limit exceeded for IP {request.client.host} on path {request.url.path}")
+        return JSONResponse(
+            status_code=429,
+            content={"detail": f"Rate limit exceeded: {exc.detail}"},
+        )
+else:
+    logger.info("Rate limiting is DISABLED.")
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start_time = time.time()
     
-    # Extract user_id from JWT token if available
     user_id = "anonymous"
     auth_header = request.headers.get("authorization")
     if auth_header and auth_header.startswith("Bearer "):
@@ -80,16 +91,10 @@ async def log_requests(request: Request, call_next):
         except JWTError:
             user_id = "invalid_token"
 
-    # Process the request
     response = await call_next(request)
-
-    # Calculate processing time
     process_time = (time.time() - start_time) * 1000
-    
-    # Get client IP address
     ip_address = request.client.host
     
-    # Construct the log message
     log_message = (
         f'user="{user_id}" '
         f'ip="{ip_address}" '
@@ -98,20 +103,14 @@ async def log_requests(request: Request, call_next):
         f'status={response.status_code} '
         f'duration={process_time:.2f}ms'
     )
-    
-    # Log the message
     logger.info(log_message)
-    
     return response
-# --- END OF LOGGING MIDDLEWARE ---
 
 
-# --- CORS MIDDLEWARE CONFIGURATION ---
 origins = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
 ]
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -119,8 +118,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# --- END OF CORS CONFIGURATION ---
-
 
 app.include_router(auth.router)
 app.include_router(config.router)
@@ -129,5 +126,6 @@ app.include_router(users.router)
 app.include_router(admin.router)
 
 @app.get("/")
-def read_root():
+@limiter_decorator("100/minute") # Example of applying a general limit
+def read_root(request: Request):
     return {"message": "Welcome to the DailyFortune API!"}
