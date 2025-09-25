@@ -1,3 +1,5 @@
+# app/routers/dependencies.py
+
 from fastapi import Depends, HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from jose import JWTError
@@ -28,9 +30,20 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncIOMotor
     if user is None:
         raise credentials_exception
     
-    user["_id"] = str(user["_id"])
+    # --- THE CORRECT FIX ---
+    # The UserInDB model has a field `id: str` which is an alias for the input key `_id`.
+    # Pydantic expects the value associated with the key `_id` to be a string.
+    # Currently, `user['_id']` is an ObjectId. We just need to convert it.
+    # We modify the dictionary IN-PLACE before passing it to the model.
+    user['_id'] = str(user['_id'])
+    # --- END OF FIX ---
     
     return UserInDB(**user)
+
+async def get_current_active_user(current_user: UserInDB = Depends(get_current_user)) -> UserInDB:
+    if current_user.status != "active":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Account is deactivated. Read-only access.")
+    return current_user
 
 # Optional authentication dependency
 async def get_optional_current_user(token: str = Depends(oauth2_scheme), db: AsyncIOMotorDatabase = Depends(get_db)) -> UserInDB | None:

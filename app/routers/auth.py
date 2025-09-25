@@ -11,14 +11,11 @@ from ..core.security import create_access_token, get_password_hash, verify_passw
 from ..db import get_db
 from ..models.user import UserCreate, UserMeProfile
 from ..models.token import Token
-
-# --- NEW: Import the conditional decorator ---
 from ..core.rate_limiter import limiter_decorator
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
-# --- MODIFIED: Use the new decorator ---
 @limiter_decorator("5/minute")
 async def register_user(request: Request, user: UserCreate, db: AsyncIOMotorDatabase = Depends(get_db)):
     config = await db.config.find_one({"key": "registration_status"})
@@ -38,7 +35,9 @@ async def register_user(request: Request, user: UserCreate, db: AsyncIOMotorData
         "background_url": "",
         "language": "zh",
         "registration_date": datetime.now(timezone.utc),
-        "last_active_date": datetime.now(timezone.utc)
+        "last_active_date": datetime.now(timezone.utc),
+        "is_hidden": False,
+        "tags": []
     }
     try:
         result = await db.users.insert_one(user_doc)
@@ -55,6 +54,7 @@ async def register_user(request: Request, user: UserCreate, db: AsyncIOMotorData
     created_user_doc = await db.users.find_one({"_id": new_user_id})
     access_token = create_access_token(data={"sub": str(new_user_id)})
     
+    created_user_doc['_id'] = str(created_user_doc['_id'])
     user_profile = UserMeProfile(**created_user_doc, id=str(created_user_doc["_id"]), total_draws=0, has_drawn_today=False, todays_fortune=None)
 
     return {
@@ -64,7 +64,6 @@ async def register_user(request: Request, user: UserCreate, db: AsyncIOMotorData
     }
 
 @router.post("/login")
-# --- MODIFIED: Use the new decorator ---
 @limiter_decorator("10/minute")
 async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncIOMotorDatabase = Depends(get_db)):
     user_doc = await db.users.find_one({"username": form_data.username.lower()})
@@ -90,12 +89,18 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
     has_drawn_today = todays_fortune_doc is not None
     todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
     
+    is_hidden_status = user_doc.pop("is_hidden", False)
+    
+    user_doc['_id'] = str(user_doc['_id'])
+
     user_profile = UserMeProfile(
         **user_doc, 
         id=str(user_id_obj), 
         total_draws=total_draws, 
         has_drawn_today=has_drawn_today,
-        todays_fortune=todays_fortune_value
+        todays_fortune=todays_fortune_value,
+        is_hidden=is_hidden_status,
+        tags=user_doc.get("tags", [])
     )
 
     return {

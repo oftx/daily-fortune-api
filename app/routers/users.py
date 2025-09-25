@@ -8,14 +8,14 @@ from pymongo.errors import DuplicateKeyError
 from ..db import get_db
 from ..models.user import UserInDB, UserMeProfile, UserPublicProfile, UserUpdate
 from ..models.fortune import FortuneHistoryItem
-from .dependencies import get_current_user
+from .dependencies import get_current_user, get_current_active_user, get_optional_current_user
 from bson import ObjectId
 from ..core.rate_limiter import limiter_decorator
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
 @router.get("/me", response_model=UserMeProfile)
-@limiter_decorator("100/minute") # Lenient limit for authenticated user's own data
+@limiter_decorator("100/minute")
 async def read_users_me(
     request: Request,
     current_user: UserInDB = Depends(get_current_user),
@@ -45,7 +45,7 @@ async def read_users_me(
 async def update_user_me(
     request: Request,
     user_update: UserUpdate,
-    current_user: UserInDB = Depends(get_current_user),
+    current_user: UserInDB = Depends(get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_db)
 ):
     user_id_obj = ObjectId(current_user.id)
@@ -77,6 +77,7 @@ async def update_user_me(
     has_drawn_today = todays_fortune_doc is not None
     todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
 
+    updated_user_doc['_id'] = str(updated_user_doc['_id'])
     user_data = {
         **updated_user_doc, 
         "id": str(updated_user_doc["_id"]), 
@@ -89,11 +90,11 @@ async def update_user_me(
 
 
 @router.get("/u/{username}/fortune-history", response_model=list[FortuneHistoryItem])
-@limiter_decorator("60/minute") # Protect this public endpoint from enumeration
+@limiter_decorator("60/minute")
 async def get_user_fortune_history(request: Request, username: str, db: AsyncIOMotorDatabase = Depends(get_db)):
     user = await db.users.find_one({"username": username.lower()})
     if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        raise HTTPException(status_code=404, detail="User not found")
         
     one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
     
@@ -110,11 +111,22 @@ async def get_user_fortune_history(request: Request, username: str, db: AsyncIOM
 
 
 @router.get("/u/{username}", response_model=UserPublicProfile)
-@limiter_decorator("60/minute") # Protect this public endpoint from enumeration
-async def get_public_profile(request: Request, username: str, db: AsyncIOMotorDatabase = Depends(get_db)):
+@limiter_decorator("60/minute")
+async def get_public_profile(
+    request: Request,
+    username: str,
+    db: AsyncIOMotorDatabase = Depends(get_db),
+    requester: UserInDB | None = Depends(get_optional_current_user)
+):
     user_doc = await db.users.find_one({"username": username.lower()})
     if not user_doc:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        raise HTTPException(status_code=404, detail="User not found")
+
+    is_hidden = user_doc.get("is_hidden", False)
+    is_requester_admin = requester and requester.role == "admin"
+    
+    if is_hidden and not is_requester_admin:
+        raise HTTPException(status_code=404, detail="User not found")
 
     user_id_obj = user_doc["_id"]
     total_draws = await db.fortunes.count_documents({"user_id": user_id_obj})
@@ -132,7 +144,9 @@ async def get_public_profile(request: Request, username: str, db: AsyncIOMotorDa
         **user_doc, 
         "total_draws": total_draws,
         "has_drawn_today": has_drawn_today,
-        "todays_fortune": todays_fortune_value
+        "todays_fortune": todays_fortune_value,
+        "is_hidden": is_hidden,
+        "tags": user_doc.get("tags", [])
     }
     
     return UserPublicProfile(**user_data)

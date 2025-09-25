@@ -16,11 +16,14 @@ from ..core.rate_limiter import limiter_decorator
 router = APIRouter(prefix="/fortune", tags=["Fortune"])
 
 @router.post("/draw")
-@limiter_decorator("30/minute") # Protect against spamming the draw logic
-async def draw(request: Request, current_user: UserInDB | None = Depends(get_optional_current_user), db: AsyncIOMotorDatabase = Depends(get_db)):
+@limiter_decorator("30/minute")
+async def draw(request: Request, db: AsyncIOMotorDatabase = Depends(get_db), current_user: UserInDB | None = Depends(get_optional_current_user)):
     today = datetime.now(timezone.utc).date()
     
     if current_user:
+        if current_user.status != "active":
+            raise HTTPException(status_code=403, detail="Account is deactivated. Cannot draw.")
+
         user_id_obj = ObjectId(current_user.id)
         
         await db.users.update_one({"_id": user_id_obj}, {"$set": {"last_active_date": datetime.now(timezone.utc)}})
@@ -44,11 +47,10 @@ async def draw(request: Request, current_user: UserInDB | None = Depends(get_opt
         await db.fortunes.insert_one(fortune_doc)
         return {"fortune": new_fortune_value}
     else:
-        # Unauthenticated users also share the rate limit
         return {"fortune": draw_fortune_logic()}
 
 @router.get("/leaderboard", response_model=List[LeaderboardEntry])
-@limiter_decorator("60/minute") # This involves a DB aggregation, so it needs protection
+@limiter_decorator("60/minute")
 async def get_todays_leaderboard(request: Request, db: AsyncIOMotorDatabase = Depends(get_db)):
     """
     Gets the leaderboard for fortunes drawn today.
