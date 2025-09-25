@@ -1,3 +1,5 @@
+# app/services/fortune_service.py
+
 import random
 
 FORTUNE_TYPES = {
@@ -7,6 +9,16 @@ FORTUNE_TYPES = {
     'SHO_KICHI': '小吉',
     'KYO': '凶',
     'DAI_KYO': '大凶',
+}
+
+# --- NEW: Define ranks for sorting the leaderboard ---
+FORTUNE_RANKS = {
+    FORTUNE_TYPES['S_KICHI']: 6,
+    FORTUNE_TYPES['DAI_KICHI']: 5,
+    FORTUNE_TYPES['KICHI']: 4,
+    FORTUNE_TYPES['SHO_KICHI']: 3,
+    FORTUNE_TYPES['KYO']: 2,
+    FORTUNE_TYPES['DAI_KYO']: 1,
 }
 
 def draw_fortune_logic() -> str:

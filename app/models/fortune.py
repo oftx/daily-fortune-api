@@ -2,12 +2,16 @@
 
 from pydantic import BaseModel
 from datetime import date
+from typing import List
 
 class FortuneHistoryItem(BaseModel):
     date: date
     value: str
 
-class LeaderboardEntry(BaseModel):
-    username: str      # The unique UserID for the link
-    display_name: str  # The name to show to the user
-    value: str
+class LeaderboardUser(BaseModel):
+    username: str
+    display_name: str
+
+class LeaderboardGroup(BaseModel):
+    fortune: str
+    users: List[LeaderboardUser]

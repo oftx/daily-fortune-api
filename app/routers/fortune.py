@@ -7,9 +7,9 @@ from bson import ObjectId
 from typing import List
 
 from ..db import get_db
-from ..services.fortune_service import draw_fortune_logic
+from ..services.fortune_service import draw_fortune_logic, FORTUNE_RANKS
 from ..models.user import UserInDB
-from ..models.fortune import LeaderboardEntry
+from ..models.fortune import LeaderboardGroup
 from .dependencies import get_optional_current_user
 from ..core.rate_limiter import limiter_decorator
 from ..core.time_service import get_current_day_start_in_utc
@@ -49,20 +49,21 @@ async def draw(request: Request, db: AsyncIOMotorDatabase = Depends(get_db), cur
     else:
         return {"fortune": draw_fortune_logic()}
 
-@router.get("/leaderboard", response_model=List[LeaderboardEntry])
+@router.get("/leaderboard", response_model=List[LeaderboardGroup])
 @limiter_decorator("60/minute")
 async def get_todays_leaderboard(request: Request, db: AsyncIOMotorDatabase = Depends(get_db)):
     """
-    Gets the leaderboard for fortunes drawn today.
+    Gets the leaderboard for fortunes drawn today, grouped and sorted by fortune rank.
     """
     today_start_utc = get_current_day_start_in_utc()
 
+    # --- MODIFICATION: Rewritten aggregation pipeline ---
     pipeline = [
+        # 1. Find today's fortunes
         {
-            "$match": {
-                "date": {"$eq": today_start_utc}
-            }
+            "$match": { "date": {"$eq": today_start_utc} }
         },
+        # 2. Join with users collection
         {
             "$lookup": {
                 "from": "users",
@@ -71,20 +72,38 @@ async def get_todays_leaderboard(request: Request, db: AsyncIOMotorDatabase = De
                 "as": "user_info"
             }
         },
+        # 3. Deconstruct the user_info array
         {
             "$unwind": "$user_info"
         },
+        # 4. Group by fortune value
+        {
+            "$group": {
+                "_id": "$value",
+                "users": {
+                    "$push": {
+                        "username": "$user_info.username",
+                        "display_name": "$user_info.display_name"
+                    }
+                }
+            }
+        },
+        # 5. Reshape the document
         {
             "$project": {
                 "_id": 0,
-                "username": "$user_info.username",
-                "display_name": "$user_info.display_name",
-                "value": "$value"
+                "fortune": "$_id",
+                "users": 1
             }
         }
     ]
+    # --- END OF MODIFICATION ---
     
     leaderboard_cursor = db.fortunes.aggregate(pipeline)
     leaderboard_data = await leaderboard_cursor.to_list(length=None)
     
-    return [LeaderboardEntry(**item) for item in leaderboard_data]
+    # --- NEW: Sort in Python using the defined ranks ---
+    # This is simpler and more maintainable than a complex aggregation $switch
+    leaderboard_data.sort(key=lambda item: FORTUNE_RANKS.get(item['fortune'], 0), reverse=True)
+    
+    return [LeaderboardGroup(**item) for item in leaderboard_data]
