@@ -1,11 +1,11 @@
 # app/models/fortune.py
 
 from pydantic import BaseModel
-from datetime import date
+from datetime import date, datetime
 from typing import List
 
 class FortuneHistoryItem(BaseModel):
-    date: date
+    created_at: datetime
     value: str
 
 class LeaderboardUser(BaseModel):

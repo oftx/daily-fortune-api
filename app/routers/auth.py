@@ -4,8 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
-from datetime import datetime, timezone, time
-from bson import ObjectId
+from datetime import datetime, timezone, timedelta
 
 from ..core.security import create_access_token, get_password_hash, verify_password
 from ..db import get_db
@@ -13,6 +12,7 @@ from ..models.user import UserCreate, UserMeProfile
 from ..models.token import Token
 from ..core.rate_limiter import limiter_decorator
 from ..core.time_service import get_current_day_start_in_utc
+from ..core.config import settings
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -38,7 +38,8 @@ async def register_user(request: Request, user: UserCreate, db: AsyncIOMotorData
         "registration_date": datetime.now(timezone.utc),
         "last_active_date": datetime.now(timezone.utc),
         "is_hidden": False,
-        "tags": []
+        "tags": [],
+        "timezone": settings.USER_DEFAULT_TIMEZONE
     }
     try:
         result = await db.users.insert_one(user_doc)
@@ -94,9 +95,14 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
     total_draws = await db.fortunes.count_documents({"user_id": user_id_obj})
     
     today_start_utc = get_current_day_start_in_utc()
+    tomorrow_start_utc = today_start_utc + timedelta(days=1)
+    
     todays_fortune_doc = await db.fortunes.find_one({
         "user_id": user_id_obj,
-        "date": today_start_utc
+        "created_at": {
+            "$gte": today_start_utc,
+            "$lt": tomorrow_start_utc
+        }
     })
     
     has_drawn_today = todays_fortune_doc is not None
@@ -114,7 +120,8 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
         has_drawn_today=has_drawn_today,
         todays_fortune=todays_fortune_value,
         is_hidden=is_hidden_status,
-        tags=tags_list
+        tags=tags_list,
+        timezone=user_doc.get("timezone", settings.USER_DEFAULT_TIMEZONE)
     )
 
     return {

@@ -2,8 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from datetime import datetime, timedelta, time, timezone
-from pymongo.errors import DuplicateKeyError
+from datetime import datetime, timedelta, timezone
 import pytz
 
 from ..db import get_db
@@ -28,15 +27,16 @@ async def read_users_me(
     total_draws = await db.fortunes.count_documents({"user_id": user_id_obj})
     
     today_start_utc = get_current_day_start_in_utc()
+    tomorrow_start_utc = today_start_utc + timedelta(days=1)
+    
     todays_fortune_doc = await db.fortunes.find_one({
         "user_id": user_id_obj,
-        "date": today_start_utc
+        "created_at": { "$gte": today_start_utc, "$lt": tomorrow_start_utc }
     })
     
     has_drawn_today = todays_fortune_doc is not None
     todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
     
-    # current_user is already a validated UserInDB model, so we can trust its fields.
     user_data = current_user.model_dump()
     user_data["total_draws"] = total_draws
     user_data["has_drawn_today"] = has_drawn_today
@@ -69,22 +69,21 @@ async def update_user_me(
             detail="Display name is already taken. Please choose another one."
         )
     
-    # After updating, fetch the complete and fresh user document from the DB
     updated_user_doc = await db.users.find_one({"_id": user_id_obj})
     
-    # Re-use the logic from get_public_profile to build the response model correctly
     total_draws = await db.fortunes.count_documents({"user_id": user_id_obj})
     
     today_start_utc = get_current_day_start_in_utc()
+    tomorrow_start_utc = today_start_utc + timedelta(days=1)
+    
     todays_fortune_doc = await db.fortunes.find_one({
         "user_id": user_id_obj,
-        "date": today_start_utc
+        "created_at": { "$gte": today_start_utc, "$lt": tomorrow_start_utc }
     })
 
     has_drawn_today = todays_fortune_doc is not None
     todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
 
-    # Construct the dictionary for the model MANUALLY and SAFELY
     user_profile_data = {
         "id": str(updated_user_doc["_id"]),
         "username": updated_user_doc["username"],
@@ -98,6 +97,7 @@ async def update_user_me(
         "avatar_url": updated_user_doc["avatar_url"],
         "background_url": updated_user_doc["background_url"],
         "language": updated_user_doc["language"],
+        "timezone": updated_user_doc.get("timezone", settings.USER_DEFAULT_TIMEZONE),
         "registration_date": updated_user_doc["registration_date"],
         "last_active_date": updated_user_doc["last_active_date"],
         "total_draws": total_draws,
@@ -115,11 +115,6 @@ async def get_user_fortune_history(request: Request, username: str, db: AsyncIOM
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
         
-    try:
-        app_tz = pytz.timezone(settings.APP_TIMEZONE)
-    except pytz.UnknownTimeZoneError:
-        app_tz = pytz.utc
-        
     one_year_ago = datetime.now(timezone.utc) - timedelta(days=365)
     
     history_cursor = db.fortunes.find({
@@ -127,11 +122,11 @@ async def get_user_fortune_history(request: Request, username: str, db: AsyncIOM
         "created_at": {"$gte": one_year_ago}
     })
     
-    history = []
-    async for record in history_cursor:
-        business_day_utc = record["date"]
-        local_date = business_day_utc.astimezone(app_tz).date()
-        history.append(FortuneHistoryItem(date=local_date, value=record["value"]))
+    # --- THIS IS THE FIX ---
+    # The logic is now simplified: just pass the raw data to the client.
+    # The Pydantic model `FortuneHistoryItem` ensures we only send `created_at` and `value`.
+    history = [FortuneHistoryItem(**record) async for record in history_cursor]
+    # --- END OF FIX ---
         
     return history
 
@@ -158,15 +153,16 @@ async def get_public_profile(
     total_draws = await db.fortunes.count_documents({"user_id": user_id_obj})
     
     today_start_utc = get_current_day_start_in_utc()
+    tomorrow_start_utc = today_start_utc + timedelta(days=1)
+    
     todays_fortune_doc = await db.fortunes.find_one({
         "user_id": user_id_obj,
-        "date": today_start_utc
+        "created_at": { "$gte": today_start_utc, "$lt": tomorrow_start_utc }
     })
 
     has_drawn_today = todays_fortune_doc is not None
     todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
 
-    # Construct the dictionary for the model MANUALLY and SAFELY
     user_profile_data = {
         "username": user_doc["username"],
         "display_name": user_doc["display_name"],
