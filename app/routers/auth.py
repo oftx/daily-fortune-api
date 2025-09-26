@@ -113,6 +113,10 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
     
     user_doc['_id'] = str(user_doc['_id'])
 
+    # --- THIS IS THE FIX ---
+    # The `**user_doc` already passes the 'timezone' key.
+    # The explicit `timezone=` argument was redundant and caused the TypeError.
+    # It has been removed.
     user_profile = UserMeProfile(
         **user_doc, 
         id=str(user_id_obj), 
@@ -120,9 +124,9 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
         has_drawn_today=has_drawn_today,
         todays_fortune=todays_fortune_value,
         is_hidden=is_hidden_status,
-        tags=tags_list,
-        timezone=user_doc.get("timezone", settings.USER_DEFAULT_TIMEZONE)
+        tags=tags_list
     )
+    # --- END OF FIX ---
 
     return {
         "access_token": access_token, 
