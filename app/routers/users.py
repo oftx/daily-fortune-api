@@ -11,12 +11,12 @@ from ..models.fortune import FortuneHistoryItem
 from .dependencies import get_current_user, get_current_active_user, get_optional_current_user
 from bson import ObjectId
 from ..core.rate_limiter import limiter_decorator
-from ..core.time_service import get_current_day_start_in_utc
+from ..core.time_service import get_current_day_start_in_utc, get_next_day_start_in_utc
 from ..core.config import settings
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
-@router.get("/me", response_model=UserMeProfile)
+@router.get("/me", response_model=dict) # <-- MODIFIED: Change response_model to dict for flexibility
 @limiter_decorator("100/minute")
 async def read_users_me(
     request: Request,
@@ -37,14 +37,23 @@ async def read_users_me(
     has_drawn_today = todays_fortune_doc is not None
     todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
     
-    user_data = current_user.model_dump()
-    user_data["total_draws"] = total_draws
-    user_data["has_drawn_today"] = has_drawn_today
-    user_data["todays_fortune"] = todays_fortune_value
+    # Create the user profile object first
+    user_profile = UserMeProfile(
+        **current_user.model_dump(),
+        total_draws=total_draws,
+        has_drawn_today=has_drawn_today,
+        todays_fortune=todays_fortune_value
+    )
     
-    return UserMeProfile(**user_data)
+    # Prepare the final response dictionary
+    response_data = {"user": user_profile}
+    
+    if has_drawn_today:
+        response_data["next_draw_at"] = get_next_day_start_in_utc()
+    
+    return response_data
 
-@router.patch("/me", response_model=UserMeProfile)
+@router.patch("/me", response_model=dict) # <-- MODIFIED: Change response_model to dict for flexibility
 @limiter_decorator("20/minute")
 async def update_user_me(
     request: Request,
@@ -84,6 +93,8 @@ async def update_user_me(
     has_drawn_today = todays_fortune_doc is not None
     todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
 
+    # We need to manually construct the dict to match UserMeProfile
+    # because updated_user_doc is a raw dict from the DB.
     user_profile_data = {
         "id": str(updated_user_doc["_id"]),
         "username": updated_user_doc["username"],
@@ -104,8 +115,14 @@ async def update_user_me(
         "has_drawn_today": has_drawn_today,
         "todays_fortune": todays_fortune_value,
     }
+    user_profile = UserMeProfile(**user_profile_data)
+    
+    response_data = {"user": user_profile}
 
-    return UserMeProfile(**user_profile_data)
+    if has_drawn_today:
+        response_data["next_draw_at"] = get_next_day_start_in_utc()
+
+    return response_data
 
 
 @router.get("/u/{username}/fortune-history", response_model=list[FortuneHistoryItem])
@@ -122,11 +139,7 @@ async def get_user_fortune_history(request: Request, username: str, db: AsyncIOM
         "created_at": {"$gte": one_year_ago}
     })
     
-    # --- THIS IS THE FIX ---
-    # The logic is now simplified: just pass the raw data to the client.
-    # The Pydantic model `FortuneHistoryItem` ensures we only send `created_at` and `value`.
     history = [FortuneHistoryItem(**record) async for record in history_cursor]
-    # --- END OF FIX ---
         
     return history
 

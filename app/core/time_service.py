@@ -40,3 +40,26 @@ def get_current_day_start_in_utc() -> datetime:
     day_start_utc = actual_day_reset_time_in_app_tz.astimezone(pytz.utc)
 
     return day_start_utc
+
+def get_next_day_start_in_utc() -> datetime:
+    """
+    Calculates the start of the *next* business day in UTC.
+    This is effectively the time when the next draw becomes available.
+    """
+    current_day_start = get_current_day_start_in_utc()
+    # We add 25 hours and then find the start of that day to safely handle DST changes.
+    day_after = current_day_start + timedelta(hours=25)
+    
+    try:
+        app_tz = pytz.timezone(settings.APP_TIMEZONE)
+    except pytz.UnknownTimeZoneError:
+        app_tz = pytz.utc
+
+    day_after_in_app_tz = day_after.astimezone(app_tz)
+    logical_day_after = day_after_in_app_tz - timedelta(seconds=settings.DAY_RESET_OFFSET_SECONDS)
+    logical_day_date = logical_day_after.date()
+    day_start_naive = datetime.combine(logical_day_date, time.min)
+    day_start_in_app_tz = app_tz.localize(day_start_naive)
+    actual_day_reset_time_in_app_tz = day_start_in_app_tz + timedelta(seconds=settings.DAY_RESET_OFFSET_SECONDS)
+    
+    return actual_day_reset_time_in_app_tz.astimezone(pytz.utc)

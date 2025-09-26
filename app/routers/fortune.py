@@ -12,7 +12,7 @@ from ..models.user import UserInDB
 from ..models.fortune import LeaderboardGroup
 from .dependencies import get_optional_current_user
 from ..core.rate_limiter import limiter_decorator
-from ..core.time_service import get_current_day_start_in_utc
+from ..core.time_service import get_current_day_start_in_utc, get_next_day_start_in_utc
 
 router = APIRouter(prefix="/fortune", tags=["Fortune"])
 
@@ -39,7 +39,10 @@ async def draw(request: Request, db: AsyncIOMotorDatabase = Depends(get_db), cur
         })
         
         if existing_fortune:
-            return {"fortune": existing_fortune["value"]}
+            return {
+                "fortune": existing_fortune["value"],
+                "next_draw_at": get_next_day_start_in_utc()
+            }
 
         new_fortune_value = draw_fortune_logic()
         fortune_doc = {
@@ -48,8 +51,12 @@ async def draw(request: Request, db: AsyncIOMotorDatabase = Depends(get_db), cur
             "created_at": datetime.now(timezone.utc)
         }
         await db.fortunes.insert_one(fortune_doc)
-        return {"fortune": new_fortune_value}
+        return {
+            "fortune": new_fortune_value,
+            "next_draw_at": get_next_day_start_in_utc()
+        }
     else:
+        # For anonymous users, the response structure remains unchanged
         return {"fortune": draw_fortune_logic()}
 
 @router.get("/leaderboard", response_model=List[LeaderboardGroup])
