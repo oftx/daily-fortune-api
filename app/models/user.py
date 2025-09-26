@@ -3,27 +3,34 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List
 from datetime import datetime
-import re # <-- Import the regular expression module
+import re
 
 class UserBase(BaseModel):
+    # The base model now only defines the fields and their basic types.
+    # The strict format validation is REMOVED from here.
     username: str = Field(..., min_length=3, max_length=50)
     email: EmailStr
 
-    # --- THIS IS THE NEW VALIDATOR ---
+class UserCreate(UserBase):
+    # This model is used for creating new users, so validation applies here.
+    password: str = Field(..., min_length=6)
+
+    # --- THIS IS THE FIX: Move the validator here ---
     @field_validator('username')
     @classmethod
     def username_alphanumeric(cls, value: str) -> str:
         """
         Validates that the username contains only letters, numbers, and underscores.
+        This rule ONLY applies to newly created users.
         """
         if not re.match(r'^[a-zA-Z0-9_]+$', value):
             raise ValueError('Username can only contain letters, numbers, and underscores.')
         return value
 
-class UserCreate(UserBase):
-    password: str = Field(..., min_length=6)
-
 class UserInDB(UserBase):
+    # This model represents data FROM the database.
+    # It inherits from UserBase but does NOT have the strict validator.
+    # Therefore, it will not raise an error for existing usernames with Chinese characters.
     id: str = Field(alias="_id")
     display_name: str
     password_hash: str
