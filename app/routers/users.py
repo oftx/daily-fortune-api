@@ -24,6 +24,14 @@ async def read_users_me(
     db: AsyncIOMotorDatabase = Depends(get_db)
 ):
     user_id_obj = ObjectId(current_user.id)
+    
+    # --- NEW: UPDATE USER'S LAST ACTIVE TIME ON PROFILE VIEW ---
+    await db.users.update_one(
+        {"_id": user_id_obj},
+        {"$set": {"last_active_date": datetime.now(timezone.utc)}}
+    )
+    # --- END OF NEW CODE ---
+
     total_draws = await db.fortunes.count_documents({"user_id": user_id_obj})
     
     today_start_utc = get_current_day_start_in_utc()
