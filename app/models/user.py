@@ -6,7 +6,7 @@ from datetime import datetime
 import re
 
 class UserBase(BaseModel):
-    username: str = Field(..., min_length=3, max_length=50)
+    username: str = Field(..., min_length=2, max_length=50)
     email: EmailStr
 
 class UserCreate(UserBase):
