@@ -17,7 +17,7 @@ from pymongo.errors import DuplicateKeyError
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
-@router.get("/me", response_model=dict) # <-- MODIFIED: Change response_model to dict for flexibility
+@router.get("/me", response_model=dict)
 @limiter_decorator("100/minute")
 async def read_users_me(
     request: Request,
@@ -58,7 +58,7 @@ async def read_users_me(
     
     return response_data
 
-@router.patch("/me", response_model=dict) # <-- MODIFIED: Change response_model to dict for flexibility
+@router.patch("/me", response_model=dict)
 @limiter_decorator("20/minute")
 async def update_user_me(
     request: Request,
@@ -117,7 +117,6 @@ async def update_user_me(
         "total_draws": total_draws,
         "has_drawn_today": has_drawn_today,
         "todays_fortune": todays_fortune_value,
-        # --- 新增字段 ---
         "qq": updated_user_doc.get("qq"),
         "use_qq_avatar": updated_user_doc.get("use_qq_avatar", False)
     }
@@ -182,11 +181,9 @@ async def get_public_profile(
     has_drawn_today = todays_fortune_doc is not None
     todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
 
-    # --- 核心修改：条件性返回 QQ 号 ---
     use_qq = user_doc.get("use_qq_avatar", False)
     user_qq_number = user_doc.get("qq")
     qq_to_return = user_qq_number if use_qq and user_qq_number else None
-    # --- 修改结束 ---
 
     user_profile_data = {
         "username": user_doc["username"],
@@ -202,9 +199,31 @@ async def get_public_profile(
         "total_draws": total_draws,
         "has_drawn_today": has_drawn_today,
         "todays_fortune": todays_fortune_value,
-        # --- 使用条件判断后的值 ---
         "qq": qq_to_return,
         "use_qq_avatar": use_qq,
     }
     
     return UserPublicProfile(**user_profile_data)
+
+# --- NEW ENDPOINT ---
+@router.get("/u/{username}/qq-public-status", response_model=dict)
+@limiter_decorator("100/minute")
+async def check_user_qq_publicity(
+    request: Request,
+    username: str,
+    # This dependency ensures the caller is logged in.
+    current_user: UserInDB = Depends(get_current_user),
+    db: AsyncIOMotorDatabase = Depends(get_db)
+):
+    """
+    Checks if a target user has made their QQ public.
+    Requires the caller to be authenticated.
+    """
+    target_user_doc = await db.users.find_one({"username": username.lower()})
+    
+    if not target_user_doc:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    is_public = target_user_doc.get("use_qq_avatar", False) and target_user_doc.get("qq") is not None
+    
+    return {"is_qq_public": is_public}
