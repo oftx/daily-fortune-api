@@ -73,3 +73,8 @@ class UserUpdate(BaseModel):
     # --- 新增字段 ---
     qq: Optional[int] = Field(None, ge=10000, le=9999999999)
     use_qq_avatar: Optional[bool] = None
+
+# --- NEW MODEL ---
+class PasswordUpdate(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=6)

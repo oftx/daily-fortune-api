@@ -6,13 +6,16 @@ from datetime import datetime, timedelta, timezone
 import pytz
 
 from ..db import get_db
-from ..models.user import UserInDB, UserMeProfile, UserPublicProfile, UserUpdate
+# --- MODIFIED: Import PasswordUpdate ---
+from ..models.user import UserInDB, UserMeProfile, UserPublicProfile, UserUpdate, PasswordUpdate
 from ..models.fortune import FortuneHistoryItem
 from .dependencies import get_current_user, get_current_active_user, get_optional_current_user
 from bson import ObjectId
 from ..core.rate_limiter import limiter_decorator
 from ..core.time_service import get_current_day_start_in_utc, get_next_day_start_in_utc
 from ..core.config import settings
+# --- MODIFIED: Import security functions ---
+from ..core.security import verify_password, get_password_hash
 from pymongo.errors import DuplicateKeyError
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -128,6 +131,36 @@ async def update_user_me(
         response_data["next_draw_at"] = get_next_day_start_in_utc()
 
     return response_data
+
+
+# --- NEW ENDPOINT ---
+@router.patch("/me/password", status_code=status.HTTP_200_OK)
+@limiter_decorator("5/minute")
+async def update_user_password(
+    request: Request,
+    password_update: PasswordUpdate,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_db)
+):
+    user_id_obj = ObjectId(current_user.id)
+    
+    # Verify current password
+    if not verify_password(password_update.current_password, current_user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Incorrect current password."
+        )
+        
+    # Hash the new password
+    new_password_hash = get_password_hash(password_update.new_password)
+    
+    # Update the password in the database
+    await db.users.update_one(
+        {"_id": user_id_obj},
+        {"$set": {"password_hash": new_password_hash}}
+    )
+    
+    return {"message": "Password updated successfully."}
 
 
 @router.get("/u/{username}/fortune-history", response_model=list[FortuneHistoryItem])
