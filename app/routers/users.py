@@ -13,6 +13,7 @@ from bson import ObjectId
 from ..core.rate_limiter import limiter_decorator
 from ..core.time_service import get_current_day_start_in_utc, get_next_day_start_in_utc
 from ..core.config import settings
+from pymongo.errors import DuplicateKeyError
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -25,12 +26,10 @@ async def read_users_me(
 ):
     user_id_obj = ObjectId(current_user.id)
     
-    # --- NEW: UPDATE USER'S LAST ACTIVE TIME ON PROFILE VIEW ---
     await db.users.update_one(
         {"_id": user_id_obj},
         {"$set": {"last_active_date": datetime.now(timezone.utc)}}
     )
-    # --- END OF NEW CODE ---
 
     total_draws = await db.fortunes.count_documents({"user_id": user_id_obj})
     
@@ -45,7 +44,6 @@ async def read_users_me(
     has_drawn_today = todays_fortune_doc is not None
     todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
     
-    # Create the user profile object first
     user_profile = UserMeProfile(
         **current_user.model_dump(),
         total_draws=total_draws,
@@ -53,7 +51,6 @@ async def read_users_me(
         todays_fortune=todays_fortune_value
     )
     
-    # Prepare the final response dictionary
     response_data = {"user": user_profile}
     
     if has_drawn_today:
@@ -101,8 +98,6 @@ async def update_user_me(
     has_drawn_today = todays_fortune_doc is not None
     todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
 
-    # We need to manually construct the dict to match UserMeProfile
-    # because updated_user_doc is a raw dict from the DB.
     user_profile_data = {
         "id": str(updated_user_doc["_id"]),
         "username": updated_user_doc["username"],
@@ -122,6 +117,9 @@ async def update_user_me(
         "total_draws": total_draws,
         "has_drawn_today": has_drawn_today,
         "todays_fortune": todays_fortune_value,
+        # --- 新增字段 ---
+        "qq": updated_user_doc.get("qq"),
+        "use_qq_avatar": updated_user_doc.get("use_qq_avatar", False)
     }
     user_profile = UserMeProfile(**user_profile_data)
     
@@ -184,6 +182,12 @@ async def get_public_profile(
     has_drawn_today = todays_fortune_doc is not None
     todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
 
+    # --- 核心修改：条件性返回 QQ 号 ---
+    use_qq = user_doc.get("use_qq_avatar", False)
+    user_qq_number = user_doc.get("qq")
+    qq_to_return = user_qq_number if use_qq and user_qq_number else None
+    # --- 修改结束 ---
+
     user_profile_data = {
         "username": user_doc["username"],
         "display_name": user_doc["display_name"],
@@ -198,6 +202,9 @@ async def get_public_profile(
         "total_draws": total_draws,
         "has_drawn_today": has_drawn_today,
         "todays_fortune": todays_fortune_value,
+        # --- 使用条件判断后的值 ---
+        "qq": qq_to_return,
+        "use_qq_avatar": use_qq,
     }
     
     return UserPublicProfile(**user_profile_data)

@@ -39,7 +39,10 @@ async def register_user(request: Request, user: UserCreate, db: AsyncIOMotorData
         "last_active_date": datetime.now(timezone.utc),
         "is_hidden": False,
         "tags": [],
-        "timezone": settings.USER_DEFAULT_TIMEZONE
+        "timezone": settings.USER_DEFAULT_TIMEZONE,
+        # --- 新增字段默认值 ---
+        "qq": None,
+        "use_qq_avatar": False
     }
     try:
         result = await db.users.insert_one(user_doc)
@@ -113,10 +116,6 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
     
     user_doc['_id'] = str(user_doc['_id'])
 
-    # --- THIS IS THE FIX ---
-    # The `**user_doc` already passes the 'timezone' key.
-    # The explicit `timezone=` argument was redundant and caused the TypeError.
-    # It has been removed.
     user_profile = UserMeProfile(
         **user_doc, 
         id=str(user_id_obj), 
@@ -126,7 +125,6 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
         is_hidden=is_hidden_status,
         tags=tags_list
     )
-    # --- END OF FIX ---
 
     return {
         "access_token": access_token, 

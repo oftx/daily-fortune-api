@@ -34,6 +34,9 @@ class UserInDB(UserBase):
     timezone: str
     registration_date: datetime = Field(default_factory=datetime.utcnow)
     last_active_date: datetime = Field(default_factory=datetime.utcnow)
+    # --- 新增字段 ---
+    qq: Optional[int] = Field(None, ge=10000, le=9999999999)
+    use_qq_avatar: bool = False
 
 class UserPublicProfile(BaseModel):
     username: str
@@ -49,6 +52,9 @@ class UserPublicProfile(BaseModel):
     status: str
     is_hidden: bool
     tags: List[str]
+    # --- 新增字段 ---
+    qq: Optional[int] = None
+    use_qq_avatar: bool = False
 
 class UserMeProfile(UserPublicProfile):
     id: str
@@ -64,3 +70,6 @@ class UserUpdate(BaseModel):
     background_url: Optional[str] = Field(None)
     language: Optional[str] = Field(None, pattern="^(zh|en)$")
     timezone: Optional[str] = Field(None)
+    # --- 新增字段 ---
+    qq: Optional[int] = Field(None, ge=10000, le=9999999999)
+    use_qq_avatar: Optional[bool] = None
