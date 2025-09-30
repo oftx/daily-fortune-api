@@ -8,7 +8,8 @@ from datetime import datetime, timezone, timedelta
 
 from ..core.security import create_access_token, get_password_hash, verify_password
 from ..db import get_db
-from ..models.user import UserCreate, UserMeProfile
+# --- FIX: Import UserInDB model ---
+from ..models.user import UserCreate, UserMeProfile, UserInDB
 from ..models.token import Token
 from ..core.rate_limiter import limiter_decorator
 from ..core.time_service import get_current_day_start_in_utc
@@ -40,7 +41,6 @@ async def register_user(request: Request, user: UserCreate, db: AsyncIOMotorData
         "is_hidden": False,
         "tags": [],
         "timezone": settings.USER_DEFAULT_TIMEZONE,
-        # --- 新增字段默认值 ---
         "qq": None,
         "use_qq_avatar": False
     }
@@ -60,18 +60,13 @@ async def register_user(request: Request, user: UserCreate, db: AsyncIOMotorData
     access_token = create_access_token(data={"sub": str(new_user_id)})
     
     created_user_doc['_id'] = str(created_user_doc['_id'])
-    
-    is_hidden_status = created_user_doc.pop("is_hidden", False)
-    tags_list = created_user_doc.pop("tags", [])
+    user_in_db = UserInDB(**created_user_doc)
 
     user_profile = UserMeProfile(
-        **created_user_doc,
-        id=str(new_user_id),
+        **user_in_db.model_dump(),
         total_draws=0,
         has_drawn_today=False,
-        todays_fortune=None,
-        is_hidden=is_hidden_status,
-        tags=tags_list
+        todays_fortune=None
     )
 
     return {
@@ -94,7 +89,7 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
     user_id_obj = user_doc["_id"]
     await db.users.update_one({"_id": user_id_obj}, {"$set": {"last_active_date": datetime.now(timezone.utc)}})
     
-    # Refresh user_doc to get the latest last_active_date
+    # Refresh user_doc to get the latest data
     user_doc = await db.users.find_one({"_id": user_id_obj})
     
     access_token = create_access_token(data={"sub": str(user_id_obj)})
@@ -114,33 +109,23 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
     has_drawn_today = todays_fortune_doc is not None
     todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
 
-    # --- FIX START: Explicitly construct the UserMeProfile object ---
-    # This ensures all fields, especially datetime objects, are correctly processed
-    # by Pydantic before being serialized to JSON.
+    # --- FINAL FIX START ---
+    # 1. Prepare the raw dictionary from the DB for Pydantic parsing.
+    user_doc['_id'] = str(user_doc['_id'])
+    
+    # 2. First, parse the raw data into a base Pydantic model (UserInDB).
+    # This crucial step validates and correctly types all fields, especially datetimes.
+    user_in_db = UserInDB(**user_doc)
+    
+    # 3. Now, create the final response model using the clean, validated data
+    # from the intermediate model. This ensures correct JSON serialization.
     user_profile = UserMeProfile(
-        id=str(user_id_obj),
-        email=user_doc["email"],
-        role=user_doc["role"],
-        language=user_doc["language"],
-        timezone=user_doc.get("timezone", settings.USER_DEFAULT_TIMEZONE),
-        username=user_doc["username"],
-        display_name=user_doc["display_name"],
-        bio=user_doc.get("bio", ""),
-        avatar_url=user_doc.get("avatar_url", ""),
-        background_url=user_doc.get("background_url", ""),
-        registration_date=user_doc["registration_date"],
-        last_active_date=user_doc["last_active_date"],
-        status=user_doc["status"],
-        is_hidden=user_doc.get("is_hidden", False),
-        tags=user_doc.get("tags", []),
-        qq=user_doc.get("qq"),
-        use_qq_avatar=user_doc.get("use_qq_avatar", False),
-        # Dynamically calculated fields
+        **user_in_db.model_dump(), # Use .model_dump() for a clean dictionary representation
         total_draws=total_draws,
         has_drawn_today=has_drawn_today,
         todays_fortune=todays_fortune_value
     )
-    # --- FIX END ---
+    # --- FINAL FIX END ---
 
     return {
         "access_token": access_token, 
