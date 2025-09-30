@@ -94,6 +94,9 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
     user_id_obj = user_doc["_id"]
     await db.users.update_one({"_id": user_id_obj}, {"$set": {"last_active_date": datetime.now(timezone.utc)}})
     
+    # Refresh user_doc to get the latest last_active_date
+    user_doc = await db.users.find_one({"_id": user_id_obj})
+    
     access_token = create_access_token(data={"sub": str(user_id_obj)})
     total_draws = await db.fortunes.count_documents({"user_id": user_id_obj})
     
@@ -110,21 +113,34 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
     
     has_drawn_today = todays_fortune_doc is not None
     todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
-    
-    is_hidden_status = user_doc.pop("is_hidden", False)
-    tags_list = user_doc.pop("tags", [])
-    
-    user_doc['_id'] = str(user_doc['_id'])
 
+    # --- FIX START: Explicitly construct the UserMeProfile object ---
+    # This ensures all fields, especially datetime objects, are correctly processed
+    # by Pydantic before being serialized to JSON.
     user_profile = UserMeProfile(
-        **user_doc, 
-        id=str(user_id_obj), 
-        total_draws=total_draws, 
+        id=str(user_id_obj),
+        email=user_doc["email"],
+        role=user_doc["role"],
+        language=user_doc["language"],
+        timezone=user_doc.get("timezone", settings.USER_DEFAULT_TIMEZONE),
+        username=user_doc["username"],
+        display_name=user_doc["display_name"],
+        bio=user_doc.get("bio", ""),
+        avatar_url=user_doc.get("avatar_url", ""),
+        background_url=user_doc.get("background_url", ""),
+        registration_date=user_doc["registration_date"],
+        last_active_date=user_doc["last_active_date"],
+        status=user_doc["status"],
+        is_hidden=user_doc.get("is_hidden", False),
+        tags=user_doc.get("tags", []),
+        qq=user_doc.get("qq"),
+        use_qq_avatar=user_doc.get("use_qq_avatar", False),
+        # Dynamically calculated fields
+        total_draws=total_draws,
         has_drawn_today=has_drawn_today,
-        todays_fortune=todays_fortune_value,
-        is_hidden=is_hidden_status,
-        tags=tags_list
+        todays_fortune=todays_fortune_value
     )
+    # --- FIX END ---
 
     return {
         "access_token": access_token, 

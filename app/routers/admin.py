@@ -3,14 +3,14 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from typing import List
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timezone, timedelta
 from pydantic import BaseModel
 from bson import ObjectId
 
 from ..db import get_db
 from ..models.user import UserInDB, UserMeProfile
 from .dependencies import get_current_user
-from ..core.time_service import get_current_day_start_in_utc # <-- NEW IMPORT
+from ..core.time_service import get_current_day_start_in_utc
 
 router = APIRouter(prefix="/admin", tags=["Administration"])
 
@@ -44,20 +44,20 @@ async def read_all_users(
     users = await users_cursor.to_list(length=None)
     
     user_profiles = []
-    # --- MODIFICATION START: Use the new time service ---
     today_start_utc = get_current_day_start_in_utc()
-    # --- MODIFICATION END ---
+    tomorrow_start_utc = today_start_utc + timedelta(days=1)
     
     for user in users:
         user_id_obj = user["_id"]
         total_draws = await db.fortunes.count_documents({"user_id": user_id_obj})
-        
-        # --- MODIFICATION START: Use the correct variable for today's start time ---
+
         todays_fortune_doc = await db.fortunes.find_one({
             "user_id": user_id_obj,
-            "date": today_start_utc
+            "created_at": {
+                "$gte": today_start_utc,
+                "$lt": tomorrow_start_utc
+            }
         })
-        # --- MODIFICATION END ---
 
         has_drawn_today = todays_fortune_doc is not None
         todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
