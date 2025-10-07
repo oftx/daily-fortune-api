@@ -1,4 +1,4 @@
-# app/models/user.py
+# /daily-fortune-api/app/models/user.py
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List
@@ -37,6 +37,8 @@ class UserInDB(UserBase):
     # --- 新增字段 ---
     qq: Optional[int] = Field(None, ge=10000, le=9999999999)
     use_qq_avatar: bool = False
+    # --- FIX: 增加密码修改时间戳字段 ---
+    password_changed_at: Optional[datetime] = None
 
 class UserPublicProfile(BaseModel):
     username: str

@@ -1,3 +1,5 @@
+# /daily-fortune-api/app/core/security.py
+
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from passlib.context import CryptContext
@@ -16,12 +18,26 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+# --- FIX: 修改函数签名以接受可选的 issued_at 参数 ---
+def create_access_token(
+    data: dict, 
+    expires_delta: Optional[timedelta] = None,
+    issued_at: Optional[datetime] = None
+) -> str:
     to_encode = data.copy()
+    
+    # --- FIX: 如果没有提供 issued_at，则使用当前时间 ---
+    now = issued_at if issued_at is not None else datetime.now(timezone.utc)
+    
     if expires_delta:
-        expire = datetime.now(timezone.utc) + expires_delta
+        expire = now + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
+        expire = now + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        
+    to_encode.update({
+        "exp": expire,
+        "iat": now
+    })
+    
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt

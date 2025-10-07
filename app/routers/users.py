@@ -1,4 +1,4 @@
-# app/routers/users.py
+# /daily-fortune-api/app/routers/users.py
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -6,7 +6,6 @@ from datetime import datetime, timedelta, timezone
 import pytz
 
 from ..db import get_db
-# --- MODIFIED: Import PasswordUpdate ---
 from ..models.user import UserInDB, UserMeProfile, UserPublicProfile, UserUpdate, PasswordUpdate
 from ..models.fortune import FortuneHistoryItem
 from .dependencies import get_current_user, get_current_active_user, get_optional_current_user
@@ -14,8 +13,7 @@ from bson import ObjectId
 from ..core.rate_limiter import limiter_decorator
 from ..core.time_service import get_current_day_start_in_utc, get_next_day_start_in_utc
 from ..core.config import settings
-# --- MODIFIED: Import security functions ---
-from ..core.security import verify_password, get_password_hash
+from ..core.security import verify_password, get_password_hash, create_access_token
 from pymongo.errors import DuplicateKeyError
 
 router = APIRouter(prefix="/users", tags=["Users"])
@@ -133,8 +131,7 @@ async def update_user_me(
     return response_data
 
 
-# --- NEW ENDPOINT ---
-@router.patch("/me/password", status_code=status.HTTP_200_OK)
+@router.patch("/me/password", status_code=status.HTTP_200_OK, response_model=dict)
 @limiter_decorator("5/minute")
 async def update_user_password(
     request: Request,
@@ -144,23 +141,40 @@ async def update_user_password(
 ):
     user_id_obj = ObjectId(current_user.id)
     
-    # Verify current password
     if not verify_password(password_update.current_password, current_user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Incorrect current password."
         )
         
-    # Hash the new password
     new_password_hash = get_password_hash(password_update.new_password)
     
-    # Update the password in the database
+    # --- FINAL FIX for Password Change Invalidation ---
+    # We create a definitive invalidation boundary at the beginning of the NEXT second.
+    # This guarantees that any token issued in the current second (or before)
+    # will have an `iat` that is strictly less than this boundary.
+    now = datetime.now(timezone.utc)
+    invalidation_boundary = now.replace(microsecond=0) + timedelta(seconds=1)
+
     await db.users.update_one(
         {"_id": user_id_obj},
-        {"$set": {"password_hash": new_password_hash}}
+        {"$set": {
+            "password_hash": new_password_hash,
+            "password_changed_at": invalidation_boundary
+        }}
     )
     
-    return {"message": "Password updated successfully."}
+    # Issue the new token aligned exactly with this boundary, so it won't be self-invalidated.
+    new_access_token = create_access_token(
+        data={"sub": current_user.id},
+        issued_at=invalidation_boundary
+    )
+    
+    return {
+        "message": "Password updated successfully.",
+        "access_token": new_access_token,
+        "token_type": "bearer"
+    }
 
 
 @router.get("/u/{username}/fortune-history", response_model=list[FortuneHistoryItem])
@@ -238,20 +252,14 @@ async def get_public_profile(
     
     return UserPublicProfile(**user_profile_data)
 
-# --- NEW ENDPOINT ---
 @router.get("/u/{username}/qq-public-status", response_model=dict)
 @limiter_decorator("100/minute")
 async def check_user_qq_publicity(
     request: Request,
     username: str,
-    # This dependency ensures the caller is logged in.
     current_user: UserInDB = Depends(get_current_user),
     db: AsyncIOMotorDatabase = Depends(get_db)
 ):
-    """
-    Checks if a target user has made their QQ public.
-    Requires the caller to be authenticated.
-    """
     target_user_doc = await db.users.find_one({"username": username.lower()})
     
     if not target_user_doc:

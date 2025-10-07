@@ -1,4 +1,4 @@
-# app/routers/auth.py
+# /daily-fortune-api/app/routers/auth.py
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordRequestForm
@@ -8,7 +8,6 @@ from datetime import datetime, timezone, timedelta
 
 from ..core.security import create_access_token, get_password_hash, verify_password
 from ..db import get_db
-# --- FIX: Import UserInDB model ---
 from ..models.user import UserCreate, UserMeProfile, UserInDB
 from ..models.token import Token
 from ..core.rate_limiter import limiter_decorator
@@ -25,6 +24,13 @@ async def register_user(request: Request, user: UserCreate, db: AsyncIOMotorData
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration is currently closed.")
 
     hashed_password = get_password_hash(user.password)
+    
+    # --- FINAL FIX for Registration Race Condition ---
+    # We truncate the microseconds to match the precision of JWT's `iat` claim.
+    # This prevents the very first token from being invalidated if login happens
+    # in the same second as registration.
+    now_utc_truncated = datetime.now(timezone.utc).replace(microsecond=0)
+    
     user_doc = {
         "username": user.username.lower(),
         "display_name": user.username,
@@ -36,8 +42,9 @@ async def register_user(request: Request, user: UserCreate, db: AsyncIOMotorData
         "avatar_url": "",
         "background_url": "",
         "language": "zh",
-        "registration_date": datetime.now(timezone.utc),
-        "last_active_date": datetime.now(timezone.utc),
+        "registration_date": now_utc_truncated,
+        "last_active_date": now_utc_truncated,
+        "password_changed_at": now_utc_truncated, # Use the truncated timestamp
         "is_hidden": False,
         "tags": [],
         "timezone": settings.USER_DEFAULT_TIMEZONE,
@@ -57,6 +64,8 @@ async def register_user(request: Request, user: UserCreate, db: AsyncIOMotorData
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="A registration conflict occurred.")
     
     created_user_doc = await db.users.find_one({"_id": new_user_id})
+    # The token generated here is for immediate use after registration.
+    # The subsequent login will generate its own token.
     access_token = create_access_token(data={"sub": str(new_user_id)})
     
     created_user_doc['_id'] = str(created_user_doc['_id'])
@@ -89,7 +98,6 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
     user_id_obj = user_doc["_id"]
     await db.users.update_one({"_id": user_id_obj}, {"$set": {"last_active_date": datetime.now(timezone.utc)}})
     
-    # Refresh user_doc to get the latest data
     user_doc = await db.users.find_one({"_id": user_id_obj})
     
     access_token = create_access_token(data={"sub": str(user_id_obj)})
@@ -109,23 +117,16 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
     has_drawn_today = todays_fortune_doc is not None
     todays_fortune_value = todays_fortune_doc.get("value") if todays_fortune_doc else None
 
-    # --- FINAL FIX START ---
-    # 1. Prepare the raw dictionary from the DB for Pydantic parsing.
     user_doc['_id'] = str(user_doc['_id'])
     
-    # 2. First, parse the raw data into a base Pydantic model (UserInDB).
-    # This crucial step validates and correctly types all fields, especially datetimes.
     user_in_db = UserInDB(**user_doc)
     
-    # 3. Now, create the final response model using the clean, validated data
-    # from the intermediate model. This ensures correct JSON serialization.
     user_profile = UserMeProfile(
-        **user_in_db.model_dump(), # Use .model_dump() for a clean dictionary representation
+        **user_in_db.model_dump(),
         total_draws=total_draws,
         has_drawn_today=has_drawn_today,
         todays_fortune=todays_fortune_value
     )
-    # --- FINAL FIX END ---
 
     return {
         "access_token": access_token, 
