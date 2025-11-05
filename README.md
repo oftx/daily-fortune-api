@@ -235,7 +235,8 @@ WantedBy=multi-user.target
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl start daily-fortune-api
-sudo systemctl enable daily-fortune-api```
+sudo systemctl enable daily-fortune-api
+```
 
 您可以通过 `sudo systemctl status daily-fortune-api` 来检查服务是否成功运行。如果遇到问题，请使用 `sudo journalctl -u daily-fortune-api.service -e` 查看详细日志。
 
