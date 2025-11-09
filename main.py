@@ -2,7 +2,7 @@
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pymongo import IndexModel, ASCENDING
 from pymongo.errors import OperationFailure
 from contextlib import asynccontextmanager
@@ -134,3 +134,13 @@ def read_root(request: Request):
     Root endpoint for health checks and welcome message.
     """
     return {"message": "Welcome to the DailyFortune API!"}
+
+@app.head("/")
+@limiter_decorator("100/minute")
+def read_root_head(request: Request):
+    """
+    Explicitly handle HEAD requests for the root path for health checks.
+    """
+    # We return an empty Response with a 200 status code.
+    # The headers will be added automatically by FastAPI/Uvicorn.
+    return Response(status_code=200)
