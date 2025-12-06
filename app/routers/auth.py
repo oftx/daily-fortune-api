@@ -6,13 +6,15 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
 from datetime import datetime, timezone, timedelta
 
-from ..core.security import create_access_token, get_password_hash, verify_password
+from ..core.security import create_access_token, create_refresh_token, get_password_hash, verify_password
 from ..db import get_db
 from ..models.user import UserCreate, UserMeProfile, UserInDB
-from ..models.token import Token
+from ..models.token import Token, RefreshTokenInput
 from ..core.rate_limiter import limiter_decorator
 from ..core.time_service import get_current_day_start_in_utc
 from ..core.config import settings
+from jose import jwt, JWTError
+from bson import ObjectId
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -67,6 +69,7 @@ async def register_user(request: Request, user: UserCreate, db: AsyncIOMotorData
     # The token generated here is for immediate use after registration.
     # The subsequent login will generate its own token.
     access_token = create_access_token(data={"sub": str(new_user_id)})
+    refresh_token = create_refresh_token(data={"sub": str(new_user_id)})
     
     created_user_doc['_id'] = str(created_user_doc['_id'])
     user_in_db = UserInDB(**created_user_doc)
@@ -79,7 +82,8 @@ async def register_user(request: Request, user: UserCreate, db: AsyncIOMotorData
     )
 
     return {
-        "access_token": access_token, 
+        "access_token": access_token,
+        "refresh_token": refresh_token,
         "token_type": "bearer",
         "user": user_profile
     }
@@ -101,6 +105,7 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
     user_doc = await db.users.find_one({"_id": user_id_obj})
     
     access_token = create_access_token(data={"sub": str(user_id_obj)})
+    refresh_token = create_refresh_token(data={"sub": str(user_id_obj)})
     total_draws = await db.fortunes.count_documents({"user_id": user_id_obj})
     
     today_start_utc = get_current_day_start_in_utc()
@@ -129,7 +134,32 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
     )
 
     return {
-        "access_token": access_token, 
+        "access_token": access_token,
+        "refresh_token": refresh_token, 
         "token_type": "bearer",
         "user": user_profile
+    }
+
+@router.post("/refresh")
+async def refresh_token(request: RefreshTokenInput, db: AsyncIOMotorDatabase = Depends(get_db)):
+    try:
+        payload = jwt.decode(request.refresh_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        if payload.get("type") != "refresh":
+             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
+        user_id = payload.get("sub")
+        if user_id is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        
+    user = await db.users.find_one({"_id": ObjectId(user_id)})
+    if not user:
+         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+         
+    access_token = create_access_token(data={"sub": user_id})
+    new_refresh_token = create_refresh_token(data={"sub": user_id})
+    return {
+        "access_token": access_token, 
+        "refresh_token": new_refresh_token, 
+        "token_type": "bearer"
     }

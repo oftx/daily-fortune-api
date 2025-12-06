@@ -1,4 +1,7 @@
 # /daily-fortune-api/app/routers/dependencies.py
+import logging
+
+logger = logging.getLogger("api_logger")
 
 from fastapi import Depends, HTTPException, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -24,13 +27,16 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncIOMotor
         # --- FIX: 从Token中获取 'iat' (issued at) 声明 ---
         issued_at_ts = payload.get("iat")
         if user_id is None or issued_at_ts is None:
+            logger.warning("Token validation failed: Missing 'sub' or 'iat' in payload.")
             raise credentials_exception
         token_data = TokenData(user_id=user_id)
-    except JWTError:
+    except JWTError as e:
+        logger.warning(f"Token validation failed: {str(e)}")
         raise credentials_exception
     
     user = await db.users.find_one({"_id": ObjectId(token_data.user_id)})
     if user is None:
+        logger.warning(f"Token validation failed: User {token_data.user_id} not found in DB.")
         raise credentials_exception
     
     # --- FIX: 检查Token是否在密码修改前签发 ---
@@ -41,6 +47,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncIOMotor
         
         # 如果Token的签发时间早于密码最后修改时间，则该Token无效
         if token_issued_at_dt < password_changed_at:
+            logger.warning(f"Token validation failed: Token issued at {token_issued_at_dt} is older than password change at {password_changed_at}.")
             raise credentials_exception
     
     # --- THE CORRECT FIX ---

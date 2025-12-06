@@ -13,6 +13,8 @@ class Settings(BaseSettings):
     SECRET_KEY: str
     ALGORITHM: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
     
     APP_TIMEZONE: str = "UTC" 
     DAY_RESET_OFFSET_SECONDS: int = 0

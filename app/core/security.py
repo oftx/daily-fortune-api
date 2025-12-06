@@ -41,3 +41,26 @@ def create_access_token(
     
     encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
     return encoded_jwt
+
+def create_refresh_token(
+    data: dict, 
+    expires_delta: Optional[timedelta] = None,
+    issued_at: Optional[datetime] = None
+) -> str:
+    to_encode = data.copy()
+    
+    now = issued_at if issued_at is not None else datetime.now(timezone.utc)
+    
+    if expires_delta:
+        expire = now + expires_delta
+    else:
+        expire = now + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        
+    to_encode.update({
+        "exp": expire,
+        "iat": now,
+        "type": "refresh"
+    })
+    
+    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
+    return encoded_jwt
