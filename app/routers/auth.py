@@ -1,6 +1,7 @@
 # /daily-fortune-api/app/routers/auth.py
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
+from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo.errors import DuplicateKeyError
@@ -20,7 +21,7 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 @limiter_decorator("5/minute")
-async def register_user(request: Request, user: UserCreate, db: AsyncIOMotorDatabase = Depends(get_db)):
+async def register_user(request: Request, response: Response, user: UserCreate, db: AsyncIOMotorDatabase = Depends(get_db)):
     config = await db.config.find_one({"key": "registration_status"})
     if not config or not config.get("value", False):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Registration is currently closed.")
@@ -81,16 +82,25 @@ async def register_user(request: Request, user: UserCreate, db: AsyncIOMotorData
         todays_fortune=None
     )
 
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=False, # Set to True in production with HTTPS
+        samesite="lax",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+    )
+
     return {
         "access_token": access_token,
-        "refresh_token": refresh_token,
+        # "refresh_token": refresh_token, # Removed from body
         "token_type": "bearer",
         "user": user_profile
     }
 
 @router.post("/login")
 @limiter_decorator("10/minute")
-async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncIOMotorDatabase = Depends(get_db)):
+async def login_for_access_token(request: Request, response: Response, form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncIOMotorDatabase = Depends(get_db)):
     user_doc = await db.users.find_one({"username": form_data.username.lower()})
     if not user_doc or not verify_password(form_data.password, user_doc["password_hash"]):
         raise HTTPException(
@@ -133,17 +143,30 @@ async def login_for_access_token(request: Request, form_data: OAuth2PasswordRequ
         todays_fortune=todays_fortune_value
     )
 
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=False, # Set to True in production with HTTPS
+        samesite="lax",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+    )
+
     return {
         "access_token": access_token,
-        "refresh_token": refresh_token, 
+        # "refresh_token": refresh_token, # Removed from body
         "token_type": "bearer",
         "user": user_profile
     }
 
 @router.post("/refresh")
-async def refresh_token(request: RefreshTokenInput, db: AsyncIOMotorDatabase = Depends(get_db)):
+async def refresh_token(request: Request, response: Response, db: AsyncIOMotorDatabase = Depends(get_db)):
+    refresh_token_cookie = request.cookies.get("refresh_token")
+    if not refresh_token_cookie:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token missing")
+
     try:
-        payload = jwt.decode(request.refresh_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        payload = jwt.decode(refresh_token_cookie, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         if payload.get("type") != "refresh":
              raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
         user_id = payload.get("sub")
@@ -158,8 +181,23 @@ async def refresh_token(request: RefreshTokenInput, db: AsyncIOMotorDatabase = D
          
     access_token = create_access_token(data={"sub": user_id})
     new_refresh_token = create_refresh_token(data={"sub": user_id})
+    
+    response.set_cookie(
+        key="refresh_token",
+        value=new_refresh_token,
+        httponly=True,
+        secure=False, # Set to True in production with HTTPS
+        samesite="lax",
+        max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+    )
+
     return {
         "access_token": access_token, 
-        "refresh_token": new_refresh_token, 
+        # "refresh_token": new_refresh_token, # Removed
         "token_type": "bearer"
     }
+
+@router.post("/logout")
+async def logout(response: Response):
+    response.delete_cookie("refresh_token")
+    return {"message": "Logged out successfully"}
