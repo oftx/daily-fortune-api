@@ -177,6 +177,39 @@ async def update_user_password(
     }
 
 
+@router.get("/me/export", response_model=dict)
+@limiter_decorator("5/minute")
+async def export_user_data(
+    request: Request,
+    current_user: UserInDB = Depends(get_current_active_user),
+    db: AsyncIOMotorDatabase = Depends(get_db)
+):
+    user_id_obj = ObjectId(current_user.id)
+    
+    user_doc = await db.users.find_one({"_id": user_id_obj})
+    if not user_doc:
+        raise HTTPException(status_code=404, detail="User not found")
+    
+    # Filter out sensitive and internal fields
+    user_doc.pop("password_hash", None)
+    user_doc.pop("email", None)
+    user_doc.pop("_id", None)
+    
+    # Fetch fortune history
+    history_cursor = db.fortunes.find({"user_id": user_id_obj}).sort("created_at", 1)
+    fortune_history = []
+    async for record in history_cursor:
+        fortune_history.append({
+            "date": record["created_at"].isoformat() if isinstance(record["created_at"], datetime) else record["created_at"],
+            "value": record["value"]
+        })
+        
+    return {
+        "user_profile": user_doc,
+        "fortune_history": fortune_history
+    }
+
+
 @router.get("/u/{username}/fortune-history", response_model=list[FortuneHistoryItem])
 @limiter_decorator("60/minute")
 async def get_user_fortune_history(request: Request, username: str, db: AsyncIOMotorDatabase = Depends(get_db)):
