@@ -1,6 +1,11 @@
 fastapi
 uvicorn[standard]
-motor
+gunicorn
+sqlalchemy>=2.0
+aiomysql
+pymysql
+cryptography
+greenlet
 passlib[bcrypt]
 python-jose[cryptography]
 pydantic

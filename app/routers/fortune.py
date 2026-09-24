@@ -1,113 +1,92 @@
-# app/routers/fortune.py
-
 from fastapi import APIRouter, Depends, HTTPException, Request
-from motor.motor_asyncio import AsyncIOMotorDatabase
-from datetime import datetime, timedelta, timezone # <-- FIX: Add timezone here
-from bson import ObjectId
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, timezone, timedelta
 from typing import List
 
 from ..db import get_db
 from ..services.fortune_service import draw_fortune_logic, FORTUNE_RANKS
 from ..models.user import UserInDB
-from ..models.fortune import LeaderboardGroup
+from ..models.fortune import LeaderboardGroup, LeaderboardUser
+from ..models.db_models import User, Fortune
 from .dependencies import get_optional_current_user
 from ..core.rate_limiter import limiter_decorator
 from ..core.time_service import get_current_day_start_in_utc, get_next_day_start_in_utc
 
 router = APIRouter(prefix="/fortune", tags=["Fortune"])
 
+
 @router.post("/draw")
 @limiter_decorator("30/minute")
-async def draw(request: Request, db: AsyncIOMotorDatabase = Depends(get_db), current_user: UserInDB | None = Depends(get_optional_current_user)):
-    if current_user:
-        if current_user.status != "active":
-            raise HTTPException(status_code=403, detail="Account is deactivated.")
-
-        user_id_obj = ObjectId(current_user.id)
-        
-        await db.users.update_one({"_id": user_id_obj}, {"$set": {"last_active_date": datetime.now(timezone.utc)}})
-        
-        today_start_utc = get_current_day_start_in_utc()
-        tomorrow_start_utc = today_start_utc + timedelta(days=1)
-        
-        existing_fortune = await db.fortunes.find_one({
-            "user_id": user_id_obj,
-            "created_at": {
-                "$gte": today_start_utc,
-                "$lt": tomorrow_start_utc
-            }
-        })
-        
-        if existing_fortune:
-            return {
-                "fortune": existing_fortune["value"],
-                "next_draw_at": get_next_day_start_in_utc()
-            }
-
-        new_fortune_value = draw_fortune_logic()
-        fortune_doc = {
-            "user_id": user_id_obj,
-            "value": new_fortune_value,
-            "created_at": datetime.now(timezone.utc)
-        }
-        await db.fortunes.insert_one(fortune_doc)
-        return {
-            "fortune": new_fortune_value,
-            "next_draw_at": get_next_day_start_in_utc()
-        }
-    else:
-        # For anonymous users, the response structure remains unchanged
+async def draw(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: UserInDB | None = Depends(get_optional_current_user),
+):
+    if not current_user:
         return {"fortune": draw_fortune_logic()}
+
+    if current_user.status != "active":
+        raise HTTPException(status_code=403, detail="Account is deactivated.")
+
+    user_pk = int(current_user.id)
+    today_start = get_current_day_start_in_utc()
+    tomorrow_start = today_start + timedelta(days=1)
+
+    user = (await db.execute(select(User).where(User.id == user_pk))).scalar_one_or_none()
+    if user:
+        user.last_active_date = datetime.now(timezone.utc)
+
+    existing = (await db.execute(
+        select(Fortune).where(
+            Fortune.user_id == user_pk,
+            Fortune.created_at >= today_start,
+            Fortune.created_at < tomorrow_start,
+        )
+    )).scalar_one_or_none()
+
+    if existing:
+        await db.commit()
+        return {"fortune": existing.value, "next_draw_at": get_next_day_start_in_utc()}
+
+    value = draw_fortune_logic()
+    db.add(Fortune(
+        user_id=user_pk,
+        date=today_start.date(),
+        value=value,
+        created_at=datetime.now(timezone.utc),
+    ))
+    await db.commit()
+    return {"fortune": value, "next_draw_at": get_next_day_start_in_utc()}
+
 
 @router.get("/leaderboard", response_model=List[LeaderboardGroup])
 @limiter_decorator("60/minute")
-async def get_todays_leaderboard(request: Request, db: AsyncIOMotorDatabase = Depends(get_db)):
-    today_start_utc = get_current_day_start_in_utc()
-    tomorrow_start_utc = today_start_utc + timedelta(days=1)
+async def get_todays_leaderboard(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    today_start = get_current_day_start_in_utc()
+    tomorrow_start = today_start + timedelta(days=1)
 
-    pipeline = [
-        {
-            "$match": { 
-                "created_at": {
-                    "$gte": today_start_utc,
-                    "$lt": tomorrow_start_utc
-                }
-            }
-        },
-        {
-            "$lookup": {
-                "from": "users",
-                "localField": "user_id",
-                "foreignField": "_id",
-                "as": "user_info"
-            }
-        },
-        {
-            "$unwind": "$user_info"
-        },
-        {
-            "$group": {
-                "_id": "$value",
-                "users": {
-                    "$push": {
-                        "username": "$user_info.username",
-                        "display_name": "$user_info.display_name"
-                    }
-                }
-            }
-        },
-        {
-            "$project": {
-                "_id": 0,
-                "fortune": "$_id",
-                "users": 1
-            }
-        }
+    rows = (await db.execute(
+        select(Fortune.value, User.username, User.display_name)
+        .join(User, User.id == Fortune.user_id)
+        .where(
+            Fortune.created_at >= today_start,
+            Fortune.created_at < tomorrow_start,
+        )
+    )).all()
+
+    grouped: dict = {}
+    for value, username, display_name in rows:
+        grouped.setdefault(value, []).append(
+            LeaderboardUser(username=username, display_name=display_name)
+        )
+
+    result = [
+        LeaderboardGroup(fortune=k, users=v)
+        for k, v in grouped.items()
     ]
-    
-    leaderboard_cursor = db.fortunes.aggregate(pipeline)
-    leaderboard_data = await leaderboard_cursor.to_list(length=None)
-    
-    leaderboard_data.sort(key=lambda item: FORTUNE_RANKS.get(item['fortune'], 0), reverse=True)
-    
-    return [LeaderboardGroup(**item) for item in leaderboard_data]
+    result.sort(key=lambda g: FORTUNE_RANKS.get(g.fortune, 0), reverse=True)
+    return result

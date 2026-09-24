@@ -1,13 +1,17 @@
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
-from .core.config import settings
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.orm import declarative_base
+from app.core.config import settings
 
-# --- THIS IS THE FIX ---
-# Add tz_aware=True to the client constructor.
-# This ensures all dates read from MongoDB are timezone-aware (UTC).
-client = AsyncIOMotorClient(settings.DATABASE_URL, tz_aware=True)
-# --- END OF FIX ---
+engine = create_async_engine(
+    settings.DATABASE_URL,
+    echo=False,
+    pool_pre_ping=True,
+    pool_recycle=3600,
+)
+AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+Base = declarative_base()
 
-db: AsyncIOMotorDatabase = client[settings.DATABASE_NAME]
 
-async def get_db() -> AsyncIOMotorDatabase:
-    return db
+async def get_db():
+    async with AsyncSessionLocal() as session:
+        yield session

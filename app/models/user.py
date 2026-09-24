@@ -1,13 +1,13 @@
-# /daily-fortune-api/app/models/user.py
-
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from typing import Optional, List
 from datetime import datetime
 import re
 
+
 class UserBase(BaseModel):
     username: str = Field(..., min_length=2, max_length=50)
     email: EmailStr
+
 
 class UserCreate(UserBase):
     password: str = Field(..., min_length=6)
@@ -19,8 +19,9 @@ class UserCreate(UserBase):
             raise ValueError('Username can only contain letters, numbers, and underscores.')
         return value
 
+
 class UserInDB(UserBase):
-    id: str = Field(alias="_id")
+    id: str
     display_name: str
     password_hash: str
     role: str = "user"
@@ -32,13 +33,12 @@ class UserInDB(UserBase):
     background_url: str = ""
     language: str = "zh"
     timezone: str
-    registration_date: datetime = Field(default_factory=datetime.utcnow)
-    last_active_date: datetime = Field(default_factory=datetime.utcnow)
-    # --- 新增字段 ---
+    registration_date: datetime
+    last_active_date: datetime
     qq: Optional[int] = Field(None, ge=10000, le=9999999999)
     use_qq_avatar: bool = False
-    # --- FIX: 增加密码修改时间戳字段 ---
     password_changed_at: Optional[datetime] = None
+
 
 class UserPublicProfile(BaseModel):
     username: str
@@ -54,9 +54,9 @@ class UserPublicProfile(BaseModel):
     status: str
     is_hidden: bool
     tags: List[str]
-    # --- 新增字段 ---
     qq: Optional[int] = None
     use_qq_avatar: bool = False
+
 
 class UserMeProfile(UserPublicProfile):
     id: str
@@ -65,18 +65,18 @@ class UserMeProfile(UserPublicProfile):
     language: str
     timezone: str
 
+
 class UserUpdate(BaseModel):
     display_name: Optional[str] = Field(None, min_length=3, max_length=50)
     bio: Optional[str] = Field(None, max_length=300)
-    avatar_url: Optional[str] = Field(None)
-    background_url: Optional[str] = Field(None)
+    avatar_url: Optional[str] = None
+    background_url: Optional[str] = None
     language: Optional[str] = Field(None, pattern="^(zh|en)$")
-    timezone: Optional[str] = Field(None)
-    # --- 新增字段 ---
+    timezone: Optional[str] = None
     qq: Optional[int] = Field(None, ge=10000, le=9999999999)
     use_qq_avatar: Optional[bool] = None
 
-# --- NEW MODEL ---
+
 class PasswordUpdate(BaseModel):
     current_password: str
     new_password: str = Field(..., min_length=6)

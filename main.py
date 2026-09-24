@@ -1,10 +1,6 @@
-# main.py
-
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
-from pymongo import IndexModel, ASCENDING
-from pymongo.errors import OperationFailure
 from contextlib import asynccontextmanager
 import logging
 from logging.handlers import RotatingFileHandler
@@ -12,7 +8,8 @@ import time
 from jose import jwt, JWTError
 
 # --- Core Application Imports ---
-from app.db import db
+from app.db import Base, engine
+from app.models import db_models  # noqa: F401  必须 import，否则建表时找不到
 from app.routers import auth, config, fortune, users, admin
 from app.core.config import settings
 
@@ -32,26 +29,10 @@ logger.addHandler(handler)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Application startup and shutdown logic.
-    """
-    logger.info("Application startup: creating database indexes...")
-    try:
-        await db.users.create_indexes([
-            IndexModel([("username", ASCENDING)], unique=True, name="username_unique"),
-            IndexModel([("email", ASCENDING)], unique=True, name="email_unique"),
-            IndexModel([("display_name", ASCENDING)], unique=True, name="display_name_unique", collation={'locale': 'en', 'strength': 2})
-        ])
-        await db.fortunes.create_indexes([
-            IndexModel([("user_id", ASCENDING)], name="fortune_user_id"),
-            IndexModel([("user_id", ASCENDING), ("date", ASCENDING)], unique=True, name="user_date_unique")
-        ])
-        await db.config.create_indexes([
-            IndexModel([("key", ASCENDING)], unique=True, name="config_key_unique")
-        ])
-        logger.info("Database indexes created successfully.")
-    except OperationFailure as e:
-        logger.error(f"An error occurred during index creation: {e}")
+    logger.info("Application startup: creating database tables...")
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    logger.info("Database tables ensured.")
     yield
     logger.info("Application shutdown.")
 
@@ -82,7 +63,7 @@ else:
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start_time = time.time()
-    
+
     user_id = "anonymous"
     auth_header = request.headers.get("authorization")
     if auth_header and auth_header.startswith("Bearer "):
@@ -96,7 +77,7 @@ async def log_requests(request: Request, call_next):
     response = await call_next(request)
     process_time = (time.time() - start_time) * 1000
     ip_address = request.client.host
-    
+
     log_message = (
         f'user="{user_id}" '
         f'ip="{ip_address}" '
@@ -108,8 +89,7 @@ async def log_requests(request: Request, call_next):
     logger.info(log_message)
     return response
 
-# --- Dynamic CORS Middleware Configuration ---
-# The origins list is now dynamically read from the settings via the .env file.
+# --- CORS ---
 logger.info(f"CORS origins configured for: {settings.CORS_ORIGINS}")
 app.add_middleware(
     CORSMiddleware,
@@ -126,21 +106,14 @@ app.include_router(fortune.router)
 app.include_router(users.router)
 app.include_router(admin.router)
 
-# --- Root Endpoint ---
+
 @app.get("/")
 @limiter_decorator("100/minute")
 def read_root(request: Request):
-    """
-    Root endpoint for health checks and welcome message.
-    """
     return {"message": "Welcome to the DailyFortune API!"}
+
 
 @app.head("/")
 @limiter_decorator("100/minute")
 def read_root_head(request: Request):
-    """
-    Explicitly handle HEAD requests for the root path for health checks.
-    """
-    # We return an empty Response with a 200 status code.
-    # The headers will be added automatically by FastAPI/Uvicorn.
     return Response(status_code=200)
